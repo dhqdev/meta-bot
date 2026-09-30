@@ -174,7 +174,7 @@ A stack segue o mesmo padrão das suas outras stacks: rede externa `network_publ
 - `ghcr.io/dhqdev/meta-bot-frontend:latest`
 - `ghcr.io/dhqdev/meta-bot-mt5:latest`
 
-Os pacotes nascem **privados**. Escolha um: torne-os públicos (GitHub → seu perfil → Packages → pacote → *Package settings → Change visibility*) **ou** cadastre o registro no Portainer (*Registries → Add registry → Custom*: `ghcr.io`, usuário `dhqdev`, senha = token do GitHub com `read:packages`).
+Como o repositório é público, as imagens também são: o Portainer baixa sem precisar de login. (Se um dia o repositório virar privado, cadastre o registro no Portainer em *Registries → Add registry → Custom*: `ghcr.io`, usuário `dhqdev`, senha = token do GitHub com `read:packages`.)
 
 **2. DNS.** Aponte `trade.tekvosoft.com` para o servidor (registro A). Se outra stack já usa esse domínio no Traefik (por exemplo, uma versão antiga do bot), remova-a ou troque o domínio dela para não haver conflito de rota.
 

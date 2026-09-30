@@ -14,8 +14,8 @@
 #   https://trade.tekvosoft.com        → Meta-Bot (escritório dos agentes e telas)
 #   https://trade.tekvosoft.com/mt5/   → MetaTrader 5 no navegador (exige estar logado no Meta-Bot)
 #
-# Imagens publicadas pelo GitHub Actions no GHCR. Se o pacote for privado, cadastre o registro
-# ghcr.io no Portainer (Registries) com um token do GitHub com permissão read:packages.
+# Imagens públicas publicadas pelo GitHub Actions no GHCR (ghcr.io/dhqdev/meta-bot-*), a cada push na main.
+# Para atualizar: Stacks → metabot → Update the stack → marque "Re-pull image" → Update.
 version: "3.7"
 
 services:
@@ -79,11 +79,9 @@ services:
         - traefik.docker.network=network_public
         - traefik.http.routers.metabot.rule=Host(`trade.tekvosoft.com`)
         - traefik.http.routers.metabot.entrypoints=websecure
-        - traefik.http.routers.metabot.priority=1
         - traefik.http.routers.metabot.tls.certresolver=letsencryptresolver
         - traefik.http.routers.metabot.service=metabot-service
         - traefik.http.services.metabot-service.loadbalancer.server.port=80
-        - traefik.http.services.metabot-service.loadbalancer.passHostHeader=true
 
   metabot-mt5:
     image: ghcr.io/dhqdev/meta-bot-mt5:latest
