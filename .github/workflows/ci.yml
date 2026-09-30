@@ -81,7 +81,7 @@ jobs:
           MB_DATA_DIR=/tmp/metabot MB_ADMIN_EMAIL=ci@example.com MB_ADMIN_PASSWORD=SenhaDoCi123 \
           MB_NETWORK_ENABLED=false nohup python -m uvicorn app.main:app --port 8000 > /tmp/metabot/backend.log 2>&1 &
           cd ../frontend
-          nohup npx vite preview --port 4173 --strictPort > /tmp/metabot/frontend.log 2>&1 &
+          nohup npx vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/metabot/frontend.log 2>&1 &
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8000/api/health > /dev/null && curl -sf http://127.0.0.1:4173 > /dev/null && exit 0
             sleep 1
