@@ -10,6 +10,7 @@
 - **Skills que evoluem**: cada agente ganha XP e sobe de nível; a Estrategista evolui parâmetros; a Auditora registra lições que entram no prompt dos colegas.
 - **MetaTrader 5 em Docker**, com acesso pelo navegador e login em qualquer corretora.
 - **Pronto para o Portainer** (Docker Swarm + Traefik) em `trade.tekvosoft.com`, com imagens publicadas pelo GitHub Actions.
+- **Funciona no celular**: o escritório e todas as telas se adaptam à tela pequena.
 
 > ⚠️ Trading envolve risco de perda. O sistema começa no **modo simulado**; teste em conta **demo** antes de ligar numa conta real.
 
@@ -49,6 +50,12 @@
 A tela **Agentes** mostra as skills, o nível e o histórico de cada um; dá para mandar um agente executar uma tarefa na hora.
 
 ![Agentes](docs/img/agentes.png)
+
+<details><summary>No celular</summary>
+
+<img src="docs/img/celular.png" alt="Meta-Bot no celular" width="300">
+
+</details>
 
 ## Como uma operação acontece
 
