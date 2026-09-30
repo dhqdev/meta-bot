@@ -14,7 +14,7 @@ export interface ActivityItem {
 export interface LiveState {
   connected: boolean;
   agents: Record<string, AgentView & { uses_ai?: boolean; emoji?: string; description?: string }>;
-  system: { running?: boolean; mode?: string; data_source?: string; ai?: boolean; mt5?: Record<string, any> };
+  system: { running?: boolean; mode?: string; data_source?: string; ai?: boolean; ai_provider?: string | null; mt5?: Record<string, any> };
   office: Record<string, any>;
   activity: ActivityItem[];
 }

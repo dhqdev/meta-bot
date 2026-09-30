@@ -2,7 +2,7 @@
 
 Monta os candidatos a partir dos setups aprovados pela Estrategista, pontua
 cada um com a evidência do backtest, a qualidade da hora (Hugo), as notícias
-(Nina) e o resultado real (Auditora), e pede ao Claude o plano final — que só
+(Nina) e o resultado real (Auditora), e pede à IA o plano final — que só
 pode escolher entre os candidatos. Sem IA, vale a pontuação.
 
 A skill "Calibração da equipe" é aprendizado de verdade: depois de cada
@@ -53,7 +53,7 @@ class ManagerAgent(Agent):
         role="Gerente",
         emoji="👔",
         uses_ai=True,
-        description="Reúne notícias, horários, backtests e risco e decide com o Claude quais setups (ativo, tempo gráfico e estratégia) ficam ativos.",
+        description="Reúne notícias, horários, backtests e risco e decide com a IA quais setups (ativo, tempo gráfico e estratégia) ficam ativos.",
     )
     interval = 15.0
     idle_task = "Acompanhando o plano"
@@ -70,6 +70,8 @@ class ManagerAgent(Agent):
         self.decision_id: int | None = None
         self.last_meeting_at = 0.0
         self.rationale = ""
+        # Economia: o plano da IA é reaproveitado enquanto os candidatos não mudarem.
+        self._ai_cache: dict | None = None
 
     async def tick(self) -> None:
         cfg = get_config()
@@ -199,7 +201,7 @@ class ManagerAgent(Agent):
         res = await self.office.llm.complete_json(
             agent=self.id,
             purpose="plano do gerente",
-            model=cfg.ai_model,
+            tier="manager",
             system=system,
             user=user,
             schema_model=AIPlan,
@@ -219,6 +221,27 @@ class ManagerAgent(Agent):
             plan.append(self._setup(c, pick.direction, pick.risk_mult, pick.reason))
         return plan, res.data.rationale[:800], res.model
 
+    @staticmethod
+    def _fingerprint(cands: list[dict]) -> list:
+        return [(c["profile_id"], c["suggested_direction"], c["blocked"], round(c["score"], 1)) for c in cands[:15]]
+
+    def _reuse_ai_plan(self, cands: list[dict]) -> tuple[list[dict], str, str] | None:
+        """Plano da IA ainda válido (mesmos candidatos e dentro da validade) → não gasta outra chamada."""
+        cache = self._ai_cache
+        cfg = get_config()
+        if not cache or time.time() - cache["at"] > cfg.ai_plan_refresh_minutes * 60:
+            return None
+        if cache["fingerprint"] != self._fingerprint(cands):
+            return None
+        by_profile = {c["profile_id"]: c for c in cands}
+        plan = []
+        for pid, direction, risk_mult, reason in cache["picks"]:
+            c = by_profile.get(pid)
+            if c is None or c["blocked"]:
+                return None
+            plan.append(self._setup(c, direction, risk_mult, reason))
+        return plan, cache["rationale"], cache["model"]
+
     # ------------------------------------------------------------ decisão
     async def decide(self) -> None:
         cfg = get_config()
@@ -236,12 +259,25 @@ class ManagerAgent(Agent):
         plan = None
         rationale = ""
         if self.office.llm.available():
-            plan, rationale, model = await self.ai_plan(cands)
-            if plan is None:
-                self.log(f"IA indisponível para o plano ({rationale}); usei a pontuação da equipe", kind="decision", level="warning")
-                rationale = ""
-            else:
+            reused = self._reuse_ai_plan(cands)
+            if reused is not None:
+                plan, rationale, model = reused
                 ai_used = True
+            else:
+                plan, rationale, model = await self.ai_plan(cands)
+                if plan is None:
+                    self.log(f"IA indisponível para o plano ({rationale}); usei a pontuação da equipe", kind="decision", level="warning")
+                    rationale = ""
+                    self._ai_cache = None
+                else:
+                    ai_used = True
+                    self._ai_cache = {
+                        "at": time.time(),
+                        "fingerprint": self._fingerprint(cands),
+                        "picks": [(p["profile_id"], p["direction"], p["risk_mult"], p["reason"]) for p in plan],
+                        "rationale": rationale,
+                        "model": model,
+                    }
         if plan is None:
             plan = self.deterministic_plan(cands)
             rationale = rationale or (
@@ -264,7 +300,7 @@ class ManagerAgent(Agent):
         self.office.publish_office(plan=plan, plan_rationale=rationale)
         summary = ", ".join(f"{p['symbol']} {p['timeframe']} {p['strategy_name']}" + ("" if p["direction"] == "both" else f" (só {'compra' if p['direction'] == 'long' else 'venda'})") for p in plan) or "ficar de fora"
         if changed:
-            self.log(f"Novo plano{' (Claude)' if ai_used else ''}: {summary}. {rationale}", kind="decision")
+            self.log(f"Novo plano{' (IA)' if ai_used else ''}: {summary}. {rationale}", kind="decision")
         self.idle("Acompanhando o plano")
 
     def meeting(self, cands: list[dict], plan: list[dict], rationale: str) -> None:

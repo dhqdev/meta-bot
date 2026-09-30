@@ -4,7 +4,7 @@
   o backtest e, se o real estiver claramente abaixo do prometido, coloca a
   estratégia "em observação" para a Estela revalidar.
 - Dá XP para quem acertou (estratégia, gerente, notícias, risco, caixa).
-- Todo dia às 22h (horário de Brasília): diário de trading. Com IA, o Claude
+- Todo dia às 22h (horário de Brasília): diário de trading. Com IA,
   escreve a análise e registra lições que entram no prompt do Gerente e da Nina.
 """
 
@@ -24,7 +24,6 @@ from app.core.strategies import REGISTRY
 from app.db import session_scope
 from app.kv import kv_get, kv_set
 from app.models import Lesson, StrategyProfile, Trade
-from app.runtime import get_config
 from app.services.llm import to_json
 
 
@@ -121,11 +120,10 @@ class AuditorAgent(Agent):
         base = f"Dia com {len(rows)} operações, {wins} vencedoras, resultado {total:+.2f}.".replace(".", ",", 1) if rows else "Dia sem operações."
         summary = base
         if rows and self.office.llm.available():
-            cfg = get_config()
             res = await self.office.llm.complete_json(
                 agent=self.id,
                 purpose="diário do dia",
-                model=cfg.ai_model,
+                tier="auditor",
                 system=playbook("auditor"),
                 user=f"Operações de hoje:\n{to_json(rows)}\nRisco: {to_json(self.office.agent('risk').status())}",
                 schema_model=AIJournal,

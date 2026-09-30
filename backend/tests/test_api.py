@@ -129,3 +129,35 @@ def test_websocket_rejects_anonymous(client):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws", headers=ORIGIN) as ws:
             ws.receive_json()
+
+
+def test_openrouter_key_via_settings(client, monkeypatch):
+    setup_owner(client)
+    view = client.get("/api/settings").json()
+    assert view["ai"]["available"] is False and view["ai"]["openrouter"]["key_set"] is False
+    assert view["options"]["openrouter_defaults"]["news"] == "deepseek/deepseek-v4-flash"
+    office = client.app.state.office
+
+    async def fake_check(key, provider="anthropic"):
+        return (key == "sk-or-v1-boa", "chave do OpenRouter válida")
+
+    monkeypatch.setattr(office.llm, "check_key", fake_check)
+    r = client.post("/api/settings/ai-key", json={"provider": "openrouter", "api_key": "sk-or-v1-ruim", "password": PASSWORD})
+    assert r.status_code == 400
+    r = client.post("/api/settings/ai-key", json={"provider": "openrouter", "api_key": "sk-or-v1-boa", "password": PASSWORD})
+    assert r.status_code == 200 and r.json()["status"]["provider"] == "openrouter"
+    view = client.get("/api/settings").json()
+    assert view["ai"]["available"] is True and view["ai"]["provider"] == "openrouter"
+    assert view["ai"]["models"]["manager"] == "google/gemini-3.1-flash-lite"
+    assert client.get("/api/system").json()["ai_provider"] == "openrouter"
+    r = client.put("/api/settings", json={"openrouter_news_model": "não é modelo"})
+    assert r.status_code == 400
+    models = client.get("/api/settings/openrouter-models").json()
+    assert models["models"] and models["defaults"]["auditor"] == "anthropic/claude-haiku-4.5"
+
+
+def test_stack_placeholders_block_startup(monkeypatch):
+    from app.config import Settings, unfilled_placeholders
+
+    s = Settings(secret_key="x" * 40, database_url="postgresql+psycopg://postgres:TROQUE_SENHA_DO_POSTGRES@postgres_postgres:5432/metabot", openrouter_api_key="TROQUE_CHAVE")
+    assert unfilled_placeholders(s) == ["MB_DATABASE_URL", "MB_OPENROUTER_API_KEY"]

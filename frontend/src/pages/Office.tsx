@@ -190,7 +190,7 @@ function AgentPanel({ id, onPick }: { id?: string; onPick: (id: string) => void 
             {a?.name} <span className="text-muted">· {a?.role}</span>
           </div>
           <div className="mt-1 flex gap-1">
-            {a?.uses_ai ? <Badge tone="green">usa IA (Claude)</Badge> : <Badge>sem IA</Badge>}
+            {a?.uses_ai ? <Badge tone="green">usa IA</Badge> : <Badge>sem IA</Badge>}
             <Badge tone={a?.state === "working" ? "gold" : a?.state === "alert" || a?.state === "error" ? "red" : "slate"}>{a?.state}</Badge>
           </div>
         </div>

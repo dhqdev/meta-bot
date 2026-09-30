@@ -38,8 +38,11 @@ class Settings(BaseSettings):
     mt5_bridge_url: str = "http://mt5:8001"
     mt5_bridge_token: str = ""
     mt5_timeout_seconds: float = 20.0
-    # IA (a chave também pode ser cadastrada pela tela, criptografada no banco).
+    # IA (as chaves também podem ser cadastradas pela tela, criptografadas no banco).
     anthropic_api_key: str = ""
+    openrouter_api_key: str = ""
+    # Endereço público do sistema (identifica o app no OpenRouter).
+    public_url: str = ""
     # Liga os agentes em segundo plano (os testes desligam).
     agents_enabled: bool = True
     # Busca notícias e calendário na internet (os testes desligam).
@@ -57,6 +60,15 @@ class Settings(BaseSettings):
         if self.database_url:
             return self.database_url
         return f"sqlite:///{Path(self.data_dir).resolve() / 'metabot.db'}"
+
+
+def unfilled_placeholders(settings: Settings) -> list[str]:
+    """Variáveis que ainda estão com o valor de exemplo da stack (TROQUE_...)."""
+    out = []
+    for name, value in settings.model_dump().items():
+        if isinstance(value, str) and "TROQUE_" in value.upper():
+            out.append(f"MB_{name.upper()}")
+    return out
 
 
 def ensure_secret_key(settings: Settings) -> str:

@@ -127,7 +127,7 @@ export function TradesPage() {
             {decisions.data?.map((d) => (
               <div key={d.id} className="px-4 py-2 text-sm">
                 <div className="flex items-center gap-2 text-xs text-muted">
-                  {dateTime(d.ts)} {d.ai ? <Badge tone="green">Claude</Badge> : <Badge>pontuação</Badge>}
+                  {dateTime(d.ts)} {d.ai ? <Badge tone="green" className="max-w-[16rem] truncate">IA{d.model ? ` · ${String(d.model).replace(/^openrouter:/, "")}` : ""}</Badge> : <Badge>pontuação</Badge>}
                 </div>
                 <div className="mt-1">{d.plan.length ? d.plan.map((p: any) => `${p.symbol} ${p.timeframe} ${p.strategy_name} (${DIRECTION_LABEL[p.direction] ?? p.direction})`).join(" · ") : "Ficar de fora"}</div>
                 {d.rationale && <div className="mt-0.5 text-xs text-slate-400">{d.rationale}</div>}

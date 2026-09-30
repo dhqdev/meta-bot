@@ -35,7 +35,7 @@ export function AgentsPage() {
       <div>
         <h1 className="font-pixel text-sm text-gold">A EQUIPE</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Cada agente tem skills que sobem de nível com trabalho e resultado real: backtests aprovados, evoluções confirmadas fora da amostra, notícias que acertaram a direção do preço, operações bem geridas. Os que usam IA (Claude) recebem no prompt o playbook da função e as lições registradas pela Auditora.
+          Cada agente tem skills que sobem de nível com trabalho e resultado real: backtests aprovados, evoluções confirmadas fora da amostra, notícias que acertaram a direção do preço, operações bem geridas. Os que usam IA (Claude direto ou modelos do OpenRouter) recebem no prompt o playbook da função e as lições registradas pela Auditora.
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import Literal
 
@@ -33,6 +34,28 @@ DEFAULT_FEEDS = [
 ]
 
 AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", "claude-fable-5-1"]
+# Provedores de IA: "auto" usa a Anthropic se houver chave dela; senão, o OpenRouter.
+AI_PROVIDERS = ["auto", "anthropic", "openrouter"]
+# Modelos predefinidos no OpenRouter, escolhidos por economia (o sistema fica ligado o dia todo):
+# - Nina (notícias) roda a cada 15 min → modelo baratíssimo;
+# - Gustavo (gerente) decide entre candidatos já filtrados pelas regras → modelo leve e rápido;
+# - Aurora (auditora) escreve o diário e as lições 1x por dia → modelo melhor, custo irrisório.
+# A tela lista o catálogo completo do OpenRouter para trocar quando quiser.
+OPENROUTER_DEFAULTS = {
+    "news": "deepseek/deepseek-v4-flash",
+    "manager": "google/gemini-3.1-flash-lite",
+    "auditor": "anthropic/claude-haiku-4.5",
+    "fallback": "google/gemini-3.1-flash-lite",
+}
+OPENROUTER_SUGGESTIONS = [
+    "deepseek/deepseek-v4-flash",
+    "google/gemini-3.1-flash-lite",
+    "google/gemini-2.5-flash-lite",
+    "anthropic/claude-haiku-4.5",
+    "anthropic/claude-sonnet-5.5",
+    "anthropic/claude-opus-5.5",
+]
+_OR_MODEL = re.compile(r"^[a-z0-9][a-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*$")
 
 
 class RuntimeConfig(BaseModel):
@@ -99,12 +122,23 @@ class RuntimeConfig(BaseModel):
     news_interval_minutes: int = Field(10, ge=2, le=240)
     news_feeds: list[NewsFeed] = Field(default_factory=lambda: [f.model_copy() for f in DEFAULT_FEEDS])
 
-    # --- IA (Claude)
+    # --- IA (Claude direto na Anthropic ou qualquer modelo via OpenRouter)
     ai_enabled: bool = True
-    ai_model: str = "claude-opus-5-5"
-    ai_news_model: str = "claude-opus-5-5"
-    ai_max_calls_per_hour: int = Field(20, ge=0, le=500)
-    ai_daily_budget_usd: float = Field(3.0, ge=0, le=1000)
+    ai_provider: str = "auto"
+    # Anthropic direto: modelo de cada agente
+    ai_model: str = "claude-sonnet-5-5"  # Gustavo (gerente)
+    ai_news_model: str = "claude-haiku-4-5"  # Nina (notícias)
+    ai_auditor_model: str = "claude-haiku-4-5"  # Aurora (auditora)
+    # OpenRouter: modelo de cada agente + reserva se o principal falhar
+    openrouter_manager_model: str = OPENROUTER_DEFAULTS["manager"]
+    openrouter_news_model: str = OPENROUTER_DEFAULTS["news"]
+    openrouter_auditor_model: str = OPENROUTER_DEFAULTS["auditor"]
+    openrouter_fallback_model: str = OPENROUTER_DEFAULTS["fallback"]
+    # Economia: intervalo mínimo entre análises de notícias por IA e validade do plano da IA
+    ai_news_interval_minutes: int = Field(15, ge=5, le=240)
+    ai_plan_refresh_minutes: int = Field(60, ge=15, le=720)
+    ai_max_calls_per_hour: int = Field(12, ge=0, le=500)
+    ai_daily_budget_usd: float = Field(0.5, ge=0, le=1000)
 
     # --- MetaTrader 5
     magic_number: int = Field(770077, ge=1, le=2_147_483_647)
@@ -134,12 +168,28 @@ class RuntimeConfig(BaseModel):
             raise ValueError("escolha pelo menos um tempo gráfico")
         return out
 
-    @field_validator("ai_model", "ai_news_model")
+    @field_validator("ai_model", "ai_news_model", "ai_auditor_model")
     @classmethod
     def _check_model(cls, value: str) -> str:
         value = value.strip()
         if not value.startswith("claude-"):
             raise ValueError("modelo inválido")
+        return value
+
+    @field_validator("ai_provider")
+    @classmethod
+    def _check_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in AI_PROVIDERS:
+            raise ValueError("provedor de IA inválido")
+        return value
+
+    @field_validator("openrouter_manager_model", "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model")
+    @classmethod
+    def _check_openrouter_model(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) > 120 or not _OR_MODEL.match(value):
+            raise ValueError("modelo do OpenRouter no formato fornecedor/modelo (ex.: anthropic/claude-opus-5.5)")
         return value
 
     @field_validator("b3_close_time")

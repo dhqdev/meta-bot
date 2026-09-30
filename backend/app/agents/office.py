@@ -97,6 +97,7 @@ class Office:
                 "mode": cfg.mode,
                 "data_source": self.market.source(),
                 "ai": self.llm.available(),
+                "ai_provider": self.llm.provider() if self.llm.available() else None,
                 "mt5": getattr(infra, "status", {}),
             },
             "office": self.office_info,

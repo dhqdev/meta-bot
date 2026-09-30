@@ -1,7 +1,7 @@
 """Nina, a analista de notícias (usa IA).
 
 Lê manchetes de vários sites (RSS), identifica os ativos citados, classifica
-sentimento e impacto (por palavras-chave na hora e pelo Claude em lotes) e
+sentimento e impacto (por palavras-chave na hora e pela IA em lotes) e
 mede depois se o sentimento acertou a direção do preço. Fontes que acertam
 ganham peso; as que erram perdem. Isso é a skill "Curadoria de fontes".
 """
@@ -109,7 +109,7 @@ class NewsAgent(Agent):
         role="Notícias",
         emoji="📰",
         uses_ai=True,
-        description="Lê as principais notícias do mercado, classifica sentimento e impacto por ativo com o Claude e mede depois se acertou a direção do preço.",
+        description="Lê as principais notícias do mercado, classifica sentimento e impacto por ativo com IA e mede depois se acertou a direção do preço.",
     )
     interval = 20.0
     idle_task = "Acompanhando as notícias"
@@ -130,7 +130,7 @@ class NewsAgent(Agent):
         settings = get_settings()
         if cfg.news_enabled and settings.network_enabled and self.due("fetch", cfg.news_interval_minutes * 60):
             await self.fetch()
-        if self.office.llm.available() and self.due("classify", 300):
+        if self.office.llm.available() and self.due("classify", cfg.ai_news_interval_minutes * 60):
             await self.classify_ai()
         if self.due("evaluate", 1800):
             await self.evaluate()
@@ -204,7 +204,7 @@ class NewsAgent(Agent):
             batch = [{"id": r.id, "source": r.source, "title": r.title, "summary": r.summary[:300]} for r in rows]
         if not batch:
             return
-        self.work(f"Analisando {len(batch)} manchetes com o Claude", "desk", "🧠")
+        self.work(f"Analisando {len(batch)} manchetes com a IA", "desk", "🧠")
         lessons = "\n".join(f"- {l['text']}" for l in active_lessons("news", 8)) or "- (nenhuma ainda)"
         system = (
             playbook("news")
@@ -222,7 +222,7 @@ class NewsAgent(Agent):
         res = await self.office.llm.complete_json(
             agent=self.id,
             purpose="classificar notícias",
-            model=cfg.ai_news_model,
+            tier="news",
             system=system,
             user=user,
             schema_model=AINewsBatch,

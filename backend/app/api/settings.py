@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
@@ -16,7 +16,7 @@ from app.deps import current_user, get_office
 from app.events import record_activity
 from app.kv import secret_get, secret_set
 from app.models import Terminal, User
-from app.runtime import AI_MODELS, TIMEFRAMES, RuntimeConfig, get_config, update_config
+from app.runtime import AI_MODELS, AI_PROVIDERS, OPENROUTER_DEFAULTS, TIMEFRAMES, RuntimeConfig, get_config, update_config
 from app.security import box, mask
 from app.services.llm import PRICES
 
@@ -32,14 +32,25 @@ def get_settings_view(user: User = Depends(current_user), office=Depends(get_off
     return {
         "config": cfg.model_dump(mode="json"),
         "defaults": RuntimeConfig().model_dump(mode="json"),
-        "options": {"timeframes": TIMEFRAMES, "ai_models": AI_MODELS, "ai_prices": PRICES},
+        "options": {
+            "timeframes": TIMEFRAMES,
+            "ai_models": AI_MODELS,
+            "ai_prices": PRICES,
+            "ai_providers": AI_PROVIDERS,
+            "openrouter_defaults": OPENROUTER_DEFAULTS,
+        },
         "ai": {
-            "key_set": bool(secret_get("anthropic_api_key") or get_settings().anthropic_api_key),
-            "key_masked": mask(secret_get("anthropic_api_key") or get_settings().anthropic_api_key),
-            "from_env": bool(get_settings().anthropic_api_key and not secret_get("anthropic_api_key")),
+            **office.llm.status(),
+            "anthropic": _key_view("anthropic_api_key", get_settings().anthropic_api_key),
+            "openrouter": _key_view("openrouter_api_key", get_settings().openrouter_api_key),
             "usage": office.llm.usage_summary(),
         },
     }
+
+
+def _key_view(name: str, env_value: str) -> dict:
+    stored = secret_get(name)
+    return {"key_set": bool(stored or env_value), "key_masked": mask(stored or env_value), "from_env": bool(env_value and not stored)}
 
 
 @router.put("")
@@ -65,23 +76,49 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
 
 class AIKeyBody(BaseModel):
     api_key: str | None = Field(None, max_length=300)
+    provider: Literal["anthropic", "openrouter"] = "anthropic"
     password: str
+
+
+PROVIDER_LABEL = {"anthropic": "da Anthropic (Claude)", "openrouter": "do OpenRouter"}
 
 
 @router.post("/ai-key")
 async def set_ai_key(body: AIKeyBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
     confirm_password(user, body.password)
     key = (body.api_key or "").strip()
+    name = f"{body.provider}_api_key"
+    label = PROVIDER_LABEL[body.provider]
     if key:
-        ok, message = await office.llm.check_key(key)
+        ok, message = await office.llm.check_key(key, body.provider)
         if not ok:
             raise HTTPException(status_code=400, detail=message)
-        secret_set("anthropic_api_key", key)
-        record_activity("system", "Chave da Anthropic (Claude) cadastrada", kind="security")
-        return {"ok": True, "message": message, "masked": mask(key)}
-    secret_set("anthropic_api_key", None)
-    record_activity("system", "Chave da Anthropic removida", kind="security")
-    return {"ok": True, "message": "chave removida"}
+        secret_set(name, key)
+        record_activity("system", f"Chave {label} cadastrada", kind="security")
+        return {"ok": True, "message": message, "masked": mask(key), "status": office.llm.status()}
+    secret_set(name, None)
+    record_activity("system", f"Chave {label} removida", kind="security")
+    return {"ok": True, "message": "chave removida", "status": office.llm.status()}
+
+
+@router.get("/openrouter-models")
+async def openrouter_models(user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    """Catálogo do OpenRouter com preço por milhão de tokens (para escolher o modelo de cada agente)."""
+    models = await office.llm.openrouter_models()
+    out = []
+    for m in models:
+        out.append(
+            {
+                "id": m["id"],
+                "name": m["name"],
+                "prompt_per_m": round(m["prompt"] * 1_000_000, 4) if m["prompt"] is not None else None,
+                "completion_per_m": round(m["completion"] * 1_000_000, 4) if m["completion"] is not None else None,
+                "context": m["context"],
+                "structured": m["structured"],
+            }
+        )
+    out.sort(key=lambda m: ((m["prompt_per_m"] or 0) + (m["completion_per_m"] or 0), m["id"]))
+    return {"models": out, "defaults": OPENROUTER_DEFAULTS}
 
 
 # ----------------------------------------------------------- terminais MT5

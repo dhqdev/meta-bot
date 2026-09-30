@@ -28,7 +28,7 @@ export function StatusChips() {
       <Badge tone={mt5Tone}>{mt5Label}</Badge>
       <Badge tone={system.data_source === "mt5" ? "green" : "purple"}>{system.data_source === "mt5" ? "dados do MT5" : "mercado simulado"}</Badge>
       <Badge tone={system.ai ? "green" : "slate"}>
-        <Bot className="h-3 w-3" /> {system.ai ? "IA ligada" : "sem IA"}
+        <Bot className="h-3 w-3" /> {system.ai ? `IA ${system.ai_provider === "openrouter" ? "OpenRouter" : system.ai_provider === "anthropic" ? "Claude" : "ligada"}` : "sem IA"}
       </Badge>
       {!connected && <Badge tone="red">reconectando…</Badge>}
     </div>

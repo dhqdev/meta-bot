@@ -24,7 +24,7 @@ export function SettingsPage() {
   if (q.isLoading || !draft) return <Loading />;
   const cfg = draft;
   const set = (k: string, v: any) => {
-    setDraft({ ...cfg, [k]: v });
+    setDraft((d) => ({ ...(d ?? {}), [k]: v }));
     setSaved(false);
   };
   const changed = JSON.stringify(cfg) !== JSON.stringify(q.data.config);
@@ -487,53 +487,191 @@ function NewsFeedsCard({ feeds, onChange, enabled, onEnabled, interval }: { feed
   );
 }
 
+const AI_AGENTS: Array<{ tier: "manager" | "news" | "auditor"; who: string; what: string; or: string; an: string }> = [
+  { tier: "news", who: "Nina (notícias)", what: "Classifica manchetes a cada poucos minutos: o que mais chama a IA.", or: "openrouter_news_model", an: "ai_news_model" },
+  { tier: "manager", who: "Gustavo (gerente)", what: "Escolhe entre candidatos já filtrados pelas regras.", or: "openrouter_manager_model", an: "ai_model" },
+  { tier: "auditor", who: "Aurora (auditora)", what: "Diário e lições, uma vez por dia.", or: "openrouter_auditor_model", an: "ai_auditor_model" },
+];
+
+// Estimativa grosseira de tokens por chamada (entrada, saída) de cada agente.
+const AI_TOKENS = { news: [3500, 1200], manager: [6000, 1500], auditor: [5000, 2000] } as const;
+
 function AICard({ cfg, set, options, ai }: { cfg: Cfg; set: (k: string, v: any) => void; options: any; ai: any }) {
-  const [key, setKey] = useState("");
-  const [prompt, setPrompt] = useState<null | "save" | "remove">(null);
+  const [prompt, setPrompt] = useState<null | { provider: "anthropic" | "openrouter"; remove: boolean }>(null);
+  const [keys, setKeys] = useState<{ anthropic: string; openrouter: string }>({ anthropic: "", openrouter: "" });
   const [msg, setMsg] = useState<string | null>(null);
   const qc = useQueryClient();
-  const models: Array<[string, string]> = options.ai_models.map((m: string) => {
+  const catalog = useQuery({ queryKey: ["openrouter-models"], queryFn: () => api.get<any>("/api/settings/openrouter-models"), staleTime: 3600_000, enabled: cfg.ai_provider !== "anthropic" });
+  const orModels: any[] = catalog.data?.models ?? [];
+  const orById = new Map(orModels.map((m) => [m.id, m]));
+  const anthropicModels: Array<[string, string]> = options.ai_models.map((m: string) => {
     const p = options.ai_prices[m];
-    return [m, p ? `${m} (US$ ${p[0]}/${p[1]} por milhão de tokens)` : m];
+    return [m, p ? `${m} (US$ ${p[0]}/${p[1]} por milhão)` : m];
   });
-  return (
-    <Card title="Inteligência artificial (Claude)">
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-        {ai.key_set ? <Badge tone="green">chave cadastrada {ai.key_masked}</Badge> : <Badge tone="red">sem chave: agentes usam regras sem IA</Badge>}
-        {ai.from_env && <Badge>vinda da variável MB_ANTHROPIC_API_KEY</Badge>}
-        <span className="text-xs text-muted">gasto hoje: US$ {money(ai.usage?.today_usd, 4)}</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Input type="password" placeholder="sk-ant-…" value={key} onChange={(e) => setKey(e.target.value)} className="max-w-sm" />
-        <Button onClick={() => setPrompt("save")} disabled={!key}>
-          Salvar chave
-        </Button>
-        {ai.key_set && !ai.from_env && (
-          <Button variant="ghost" onClick={() => setPrompt("remove")}>
-            Remover
+  const price = (id: string) => {
+    const m = orById.get(id);
+    if (!m || m.prompt_per_m == null) return null;
+    return `US$ ${m.prompt_per_m} entrada / ${m.completion_per_m} saída por milhão${m.structured ? "" : " · sem JSON Schema (usa modo JSON)"}`;
+  };
+  // Custo estimado por dia no provedor em uso (teto = orçamento diário).
+  const provider: string | null = ai.provider;
+  const callsPerDay = { news: 1440 / (cfg.ai_news_interval_minutes || 15), manager: Math.min(1440 / (cfg.decision_interval_minutes || 15), (1440 / (cfg.ai_plan_refresh_minutes || 60)) * 3), auditor: 1 };
+  let estimate: number | null = 0;
+  for (const a of AI_AGENTS) {
+    const [inp, out] = AI_TOKENS[a.tier];
+    let pin: number | null = null;
+    let pout: number | null = null;
+    if (provider === "openrouter") {
+      const m = orById.get(cfg[a.or]);
+      pin = m?.prompt_per_m ?? null;
+      pout = m?.completion_per_m ?? null;
+    } else if (provider === "anthropic") {
+      const p = options.ai_prices[cfg[a.an]];
+      pin = p?.[0] ?? null;
+      pout = p?.[1] ?? null;
+    }
+    if (pin == null || pout == null || estimate == null) {
+      estimate = null;
+      continue;
+    }
+    estimate += (callsPerDay[a.tier] * (inp * pin + out * pout)) / 1_000_000;
+  }
+  const cap = estimate == null ? null : cfg.ai_daily_budget_usd > 0 ? Math.min(estimate, cfg.ai_daily_budget_usd) : estimate;
+
+  const keyBox = (id: "openrouter" | "anthropic", title: string, placeholder: string, envName: string, extra: ReactNode) => {
+    const k = ai[id] || {};
+    return (
+      <div className="rounded-lg border border-line bg-ink/40 p-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold text-slate-200">{title}</span>
+          {k.key_set ? <Badge tone="green">chave {k.key_masked}</Badge> : <Badge>sem chave</Badge>}
+          {k.from_env && <Badge tone="blue">vinda de {envName}</Badge>}
+          {provider === id && <Badge tone="gold">em uso</Badge>}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Input type="password" placeholder={placeholder} value={keys[id]} onChange={(e) => setKeys({ ...keys, [id]: e.target.value })} className="min-w-0 flex-1" autoComplete="off" />
+          <Button onClick={() => setPrompt({ provider: id, remove: false })} disabled={!keys[id]}>
+            Salvar
           </Button>
+          {k.key_set && !k.from_env && (
+            <Button variant="ghost" onClick={() => setPrompt({ provider: id, remove: true })}>
+              Remover
+            </Button>
+          )}
+        </div>
+        <p className="mt-2 text-[11px] leading-snug text-muted">{extra}</p>
+      </div>
+    );
+  };
+
+  return (
+    <Card title="Inteligência artificial">
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        {ai.available ? <Badge tone="green">IA ligada via {ai.provider_name}</Badge> : <Badge tone="red">sem IA: os agentes usam só as regras</Badge>}
+        <span className="text-xs text-muted">
+          gasto hoje: US$ {money(ai.usage?.today_usd, 4)} · 30 dias: US$ {money(ai.usage?.last_30d_usd, 3)}
+          {cap != null && (
+            <span title="Máximo estimado se todos os agentes usarem a IA no limite configurado; o gasto real costuma ser menor.">
+              {" "}
+              · estimativa máxima: ~US$ {money(cap, 2)}/dia (~US$ {money(cap * 30, 2)}/mês)
+            </span>
+          )}
+        </span>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {keyBox(
+          "openrouter",
+          "OpenRouter",
+          "sk-or-v1-…",
+          "MB_OPENROUTER_API_KEY",
+          <>
+            Uma chave para centenas de modelos, pagando só o que usar. Crie em{" "}
+            <a className="text-gold underline" href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
+              openrouter.ai/keys
+            </a>
+            . Os modelos econômicos de cada agente já vêm escolhidos.
+          </>,
         )}
+        {keyBox("anthropic", "Anthropic (Claude direto)", "sk-ant-…", "MB_ANTHROPIC_API_KEY", <>Opcional. Com as duas chaves, o modo automático usa a Anthropic.</>)}
       </div>
       {msg && <p className="mt-2 text-sm text-emerald-300">{msg}</p>}
-      <div className="mt-4">
-        <Grid>
-          <Field label="Modelo do Gerente e da Auditora" hint="Decisões e diário (poucas chamadas).">
-            <Select value={cfg.ai_model} onChange={(v) => set("ai_model", v)} options={models} />
-          </Field>
-          <Field label="Modelo das notícias (Nina)" hint="Muitas chamadas pequenas: o Haiku 4.5 custa ~4× menos.">
-            <Select value={cfg.ai_news_model} onChange={(v) => set("ai_news_model", v)} options={models} />
-          </Field>
-          <Field label="Máximo de chamadas por hora">
-            <Input type="number" value={cfg.ai_max_calls_per_hour} onChange={(e) => set("ai_max_calls_per_hour", Number(e.target.value))} />
-          </Field>
-          <Field label="Orçamento diário (US$)">
-            <Input type="number" step={0.5} value={cfg.ai_daily_budget_usd} onChange={(e) => set("ai_daily_budget_usd", Number(e.target.value))} />
-          </Field>
-        </Grid>
-        <div className="mt-3">
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        <Field label="Provedor" hint="Automático: Anthropic se tiver a chave dela; senão, OpenRouter.">
+          <Select value={cfg.ai_provider} onChange={(v) => set("ai_provider", v)} options={[["auto", "Automático"], ["openrouter", "OpenRouter"], ["anthropic", "Anthropic direto"]]} />
+        </Field>
+        <Field label="Máximo de chamadas por hora" hint="Passou disso, os agentes seguem só com as regras até a próxima hora.">
+          <Input type="number" value={cfg.ai_max_calls_per_hour} onChange={(e) => set("ai_max_calls_per_hour", Number(e.target.value))} />
+        </Field>
+        <Field label="Orçamento diário (US$)" hint="Teto de gasto por dia (0 = sem teto).">
+          <Input type="number" step={0.1} value={cfg.ai_daily_budget_usd} onChange={(e) => set("ai_daily_budget_usd", Number(e.target.value))} />
+        </Field>
+        <Field label="Notícias por IA a cada (min)" hint="A Nina junta as manchetes novas e manda de uma vez.">
+          <Input type="number" value={cfg.ai_news_interval_minutes} onChange={(e) => set("ai_news_interval_minutes", Number(e.target.value))} />
+        </Field>
+        <Field label="Validade do plano da IA (min)" hint="Sem mudança nos candidatos, o Gustavo reaproveita o plano e não chama a IA.">
+          <Input type="number" value={cfg.ai_plan_refresh_minutes} onChange={(e) => set("ai_plan_refresh_minutes", Number(e.target.value))} />
+        </Field>
+        <div className="flex items-end pb-2">
           <Switch checked={cfg.ai_enabled} onChange={(v) => set("ai_enabled", v)} label="IA ligada" />
         </div>
       </div>
+
+      <div className="mt-5">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-200">Modelo de cada agente</h3>
+          {cfg.ai_provider !== "anthropic" && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                const d = options.openrouter_defaults;
+                set("openrouter_news_model", d.news);
+                set("openrouter_manager_model", d.manager);
+                set("openrouter_auditor_model", d.auditor);
+                set("openrouter_fallback_model", d.fallback);
+              }}
+            >
+              Restaurar os econômicos
+            </Button>
+          )}
+        </div>
+        <datalist id="openrouter-models">
+          {orModels.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {m.prompt_per_m != null ? ` — US$ ${m.prompt_per_m}/${m.completion_per_m} por milhão` : ""}
+            </option>
+          ))}
+        </datalist>
+        <div className="space-y-3">
+          {AI_AGENTS.map((a) => (
+            <div key={a.tier} className="grid gap-2 rounded-lg border border-line p-3 md:grid-cols-[1fr_1.4fr_1fr] md:items-start">
+              <div>
+                <div className="text-sm font-semibold text-slate-200">{a.who}</div>
+                <div className="text-[11px] leading-snug text-muted">{a.what}</div>
+                {ai.models?.[a.tier] && <div className="mt-1 text-[11px] text-emerald-300">em uso: {ai.models[a.tier]}</div>}
+              </div>
+              <Field label="No OpenRouter" hint={price(cfg[a.or]) ?? (catalog.isLoading ? "carregando preços…" : undefined)}>
+                <Input list="openrouter-models" value={cfg[a.or] ?? ""} onChange={(e) => set(a.or, e.target.value.trim())} spellCheck={false} />
+              </Field>
+              <Field label="Na Anthropic">
+                <Select value={cfg[a.an]} onChange={(v) => set(a.an, v)} options={anthropicModels} />
+              </Field>
+            </div>
+          ))}
+          <div className="grid gap-2 rounded-lg border border-dashed border-line p-3 md:grid-cols-[1fr_1.4fr_1fr] md:items-start">
+            <div>
+              <div className="text-sm font-semibold text-slate-200">Reserva (OpenRouter)</div>
+              <div className="text-[11px] leading-snug text-muted">Usado se o modelo principal estiver fora do ar ou sumir do catálogo.</div>
+            </div>
+            <Field label="No OpenRouter" hint={price(cfg.openrouter_fallback_model) ?? undefined}>
+              <Input list="openrouter-models" value={cfg.openrouter_fallback_model ?? ""} onChange={(e) => set("openrouter_fallback_model", e.target.value.trim())} spellCheck={false} />
+            </Field>
+            <div className="text-[11px] leading-snug text-muted md:pt-6">Na Anthropic o servidor já troca de modelo sozinho quando precisa.</div>
+          </div>
+        </div>
+      </div>
+
       {ai.usage?.by_agent?.length > 0 && (
         <div className="mt-3 text-xs text-muted">
           Últimos 7 dias:{" "}
@@ -546,13 +684,15 @@ function AICard({ cfg, set, options, ai }: { cfg: Cfg; set: (k: string, v: any) 
       )}
       <PasswordPrompt
         open={prompt !== null}
-        title={prompt === "remove" ? "Remover a chave" : "Salvar a chave da Anthropic"}
-        description={prompt === "remove" ? "Os agentes passam a usar as regras sem IA." : "A chave é conferida na Anthropic (sem gastar tokens) e fica criptografada."}
+        title={prompt?.remove ? "Remover a chave" : `Salvar a chave ${prompt?.provider === "openrouter" ? "do OpenRouter" : "da Anthropic"}`}
+        description={prompt?.remove ? "Sem chave deste provedor, os agentes usam o outro (se houver) ou só as regras." : "A chave é conferida no provedor (sem gastar tokens) e fica criptografada no banco."}
         onCancel={() => setPrompt(null)}
         onConfirm={async (password) => {
-          const r = await api.post<any>("/api/settings/ai-key", { api_key: prompt === "remove" ? null : key, password });
+          if (!prompt) return;
+          const r = await api.post<any>("/api/settings/ai-key", { provider: prompt.provider, api_key: prompt.remove ? null : keys[prompt.provider], password });
           setMsg(r.message);
-          setKey("");
+          setKeys({ ...keys, [prompt.provider]: "" });
+          patchSystem({ ai: !!r.status?.available, ai_provider: r.status?.available ? r.status.provider : null });
           setPrompt(null);
           void qc.invalidateQueries({ queryKey: ["settings"] });
         }}
