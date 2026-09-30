@@ -1,5 +1,6 @@
 # Testa e publica as imagens do Meta-Bot no GitHub Container Registry (ghcr.io).
-#   - push/PR: testes do backend (+ bridge do MT5), build do frontend e teste de ponta a ponta
+#   - push/PR: testes do backend (+ bridge do MT5), build do frontend, teste de ponta a ponta
+#     e build das três imagens (sem publicar)
 #   - push na main ou tag v*: publica ghcr.io/<dono>/meta-bot-{backend,frontend,mt5}
 #     com as tags latest (main), sha-xxxxxxx e a versão da tag
 #   - opcional: secret PORTAINER_WEBHOOK_URL (uma ou mais URLs de webhook de serviço/stack do
@@ -8,7 +9,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "claude/**"]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -125,7 +126,9 @@ jobs:
       - name: Decidir se publica
         id: pub
         run: |
-          if [ "${{ github.event_name }}" = "push" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; }; then
+          ref="${{ github.ref }}"
+          if { [ "${{ github.event_name }}" = "push" ] && { [ "$ref" = "refs/heads/main" ] || [[ "$ref" == refs/tags/v* ]]; }; } \
+             || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; }; then
             echo "push=true" >> "$GITHUB_OUTPUT"
           else
             echo "push=false" >> "$GITHUB_OUTPUT"
