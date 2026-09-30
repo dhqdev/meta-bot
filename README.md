@@ -160,7 +160,7 @@ A pasta [`mt5/`](mt5/) parte do projeto [gmag11/MetaTrader5-Docker](https://gith
 4. **Corretora com instalador próprio do MT5**: troque `MT5_INSTALLER_URL` antes da primeira inicialização.
 5. **Várias corretoras ao mesmo tempo**: suba um serviço `mt5` por conta e cadastre cada um em Config. → MetaTrader 5; o terminal marcado como ativo é o usado.
 
-Limitações: roda só em servidor **x86_64/amd64**; a primeira inicialização baixa e instala Mono, MT5 e Python no Wine (**5 a 10 minutos**); algumas corretoras exigem aceite de termos no primeiro login pelo painel. Detalhes em [`mt5/README.md`](mt5/README.md).
+Limitações: o MT5 roda só em servidor **x86_64/amd64** (o backend e o frontend também rodam em **ARM**, ex.: Oracle Ampere). Com servidor ARM, adicione um nó Intel/AMD ao Swarm — o serviço `metabot-mt5` vai para ele sozinho — ou deixe `replicas: 0` e use o mercado simulado; a primeira inicialização baixa e instala Mono, MT5 e Python no Wine (**5 a 10 minutos**); algumas corretoras exigem aceite de termos no primeiro login pelo painel. Detalhes em [`mt5/README.md`](mt5/README.md).
 
 Enquanto o MT5 não está conectado, o sistema usa um **mercado simulado** (determinístico, com sessões, volatilidade por hora e regimes) para você ver a equipe trabalhando desde o primeiro minuto.
 

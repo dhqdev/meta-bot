@@ -119,8 +119,9 @@ services:
         delay: 10s
       placement:
         constraints:
-          - node.role == manager
-          # Wine + MetaTrader 5 só rodam em x86_64
+          # Wine + MetaTrader 5 só rodam em Intel/AMD (x86_64). Em servidor ARM (ex.: Oracle Ampere)
+          # este serviço fica "pending" até existir um nó x86_64 no Swarm (manager ou worker).
+          # Enquanto isso, deixe replicas: 0; o resto do sistema funciona com o mercado simulado.
           - node.platform.arch == x86_64
 
 volumes:
