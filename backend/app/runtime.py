@@ -1,0 +1,198 @@
+"""Configurações editáveis pela tela (guardadas no banco)."""
+
+from __future__ import annotations
+
+import threading
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+TIMEFRAMES = ["M5", "M15", "M30", "H1", "H4", "D1"]
+TIMEFRAME_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
+
+FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+
+
+class NewsFeed(BaseModel):
+    name: str
+    url: str
+    lang: str = "en"
+    enabled: bool = True
+
+
+DEFAULT_FEEDS = [
+    NewsFeed(name="FXStreet", url="https://www.fxstreet.com/rss/news"),
+    NewsFeed(name="Investing.com Forex", url="https://www.investing.com/rss/news_1.rss"),
+    NewsFeed(name="CNBC Markets", url="https://www.cnbc.com/id/15839069/device/rss/rss.html"),
+    NewsFeed(name="MarketWatch", url="https://feeds.content.dowjones.io/public/rss/mw_topstories"),
+    NewsFeed(name="Yahoo Finance", url="https://finance.yahoo.com/news/rssindex"),
+    NewsFeed(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    NewsFeed(name="InfoMoney", url="https://www.infomoney.com.br/feed/", lang="pt"),
+    NewsFeed(name="Money Times", url="https://www.moneytimes.com.br/feed/", lang="pt"),
+    NewsFeed(name="Investing.com Brasil", url="https://br.investing.com/rss/news.rss", lang="pt"),
+]
+
+AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", "claude-fable-5-1"]
+
+
+class RuntimeConfig(BaseModel):
+    # --- Sistema
+    system_running: bool = False
+    mode: Literal["paper", "live"] = "paper"
+    data_source: Literal["auto", "mt5", "synthetic"] = "auto"
+
+    # --- Ativos
+    watchlist: list[str] = Field(default_factory=lambda: ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US500", "BTCUSD"])
+    timeframes: list[str] = Field(default_factory=lambda: ["M15", "H1", "H4"])
+    enabled_strategies: list[str] = Field(default_factory=list)  # vazio = todas
+
+    # --- Conta simulada
+    paper_initial_balance: float = Field(10000.0, ge=100, le=100_000_000)
+    paper_commission_per_lot: float = Field(7.0, ge=0, le=500)
+    paper_slippage_points: float = Field(2.0, ge=0, le=1000)
+
+    # --- Risco (Rita)
+    risk_per_trade_pct: float = Field(0.5, ge=0.05, le=5)
+    max_daily_loss_pct: float = Field(3.0, ge=0.5, le=20)
+    max_drawdown_pct: float = Field(12.0, ge=2, le=50)
+    max_open_positions: int = Field(3, ge=1, le=20)
+    max_positions_per_symbol: int = Field(1, ge=1, le=5)
+    max_currency_exposure: int = Field(2, ge=1, le=10)
+    max_spread_multiplier: float = Field(2.5, ge=1, le=10)
+    adaptive_risk: bool = True
+    min_lot_overrisk: float = Field(1.5, ge=1, le=5)
+
+    # --- Estrategista (Estela)
+    rank_by: Literal["win_rate", "expectancy", "profit_factor", "net"] = "win_rate"
+    min_trades: int = Field(25, ge=5, le=1000)
+    min_profit_factor: float = Field(1.1, ge=0.5, le=5)
+    oos_fraction: float = Field(0.3, ge=0.1, le=0.5)
+    ranking_interval_hours: float = Field(6, ge=0.5, le=168)
+    evolution_enabled: bool = True
+    evolution_interval_hours: float = Field(24, ge=1, le=720)
+
+    # --- Gerente (Gustavo)
+    decision_interval_minutes: int = Field(15, ge=1, le=240)
+    max_active_setups: int = Field(3, ge=1, le=10)
+    min_hour_quality: float = Field(0.35, ge=0, le=1)
+    use_news_filter: bool = True
+    news_block_threshold: float = Field(0.55, ge=0.1, le=1)
+
+    # --- Caixa (Caio)
+    break_even_r: float = Field(1.0, ge=0, le=5)
+    trailing_start_r: float = Field(1.5, ge=0, le=10)
+    trailing_atr_mult: float = Field(2.0, ge=0.5, le=10)
+    adaptive_exits: bool = True
+    max_bars_in_trade: int = Field(0, ge=0, le=5000)
+    close_before_weekend: bool = True
+    b3_close_time: str = "18:20"
+    b3_prefixes: list[str] = Field(default_factory=lambda: ["WIN", "WDO", "IND", "DOL", "BIT"])
+
+    # --- Horários e calendário (Hugo)
+    blackout_before_min: int = Field(30, ge=0, le=240)
+    blackout_after_min: int = Field(30, ge=0, le=240)
+    blackout_impacts: list[str] = Field(default_factory=lambda: ["High"])
+    calendar_url: str = FF_CALENDAR_URL
+
+    # --- Notícias (Nina)
+    news_enabled: bool = True
+    news_interval_minutes: int = Field(10, ge=2, le=240)
+    news_feeds: list[NewsFeed] = Field(default_factory=lambda: [f.model_copy() for f in DEFAULT_FEEDS])
+
+    # --- IA (Claude)
+    ai_enabled: bool = True
+    ai_model: str = "claude-opus-5-5"
+    ai_news_model: str = "claude-opus-5-5"
+    ai_max_calls_per_hour: int = Field(20, ge=0, le=500)
+    ai_daily_budget_usd: float = Field(3.0, ge=0, le=1000)
+
+    # --- MetaTrader 5
+    magic_number: int = Field(770077, ge=1, le=2_147_483_647)
+    deviation_points: int = Field(20, ge=0, le=1000)
+    server_utc_offset_hours: float | None = Field(None, ge=-14, le=14)
+
+    @field_validator("watchlist")
+    @classmethod
+    def _clean_watchlist(cls, value: list[str]) -> list[str]:
+        out: list[str] = []
+        for item in value:
+            sym = str(item).strip()
+            if sym and sym not in out:
+                out.append(sym[:40])
+        if not out:
+            raise ValueError("escolha pelo menos um ativo")
+        if len(out) > 30:
+            raise ValueError("no máximo 30 ativos")
+        return out
+
+    @field_validator("timeframes")
+    @classmethod
+    def _clean_timeframes(cls, value: list[str]) -> list[str]:
+        out = [tf.upper() for tf in value if tf.upper() in TIMEFRAMES]
+        out = [tf for tf in TIMEFRAMES if tf in out]
+        if not out:
+            raise ValueError("escolha pelo menos um tempo gráfico")
+        return out
+
+    @field_validator("ai_model", "ai_news_model")
+    @classmethod
+    def _check_model(cls, value: str) -> str:
+        value = value.strip()
+        if not value.startswith("claude-"):
+            raise ValueError("modelo inválido")
+        return value
+
+    @field_validator("b3_close_time")
+    @classmethod
+    def _check_time(cls, value: str) -> str:
+        hh, _, mm = value.partition(":")
+        if not (hh.isdigit() and mm.isdigit() and 0 <= int(hh) < 24 and 0 <= int(mm) < 60):
+            raise ValueError("horário no formato HH:MM")
+        return f"{int(hh):02d}:{int(mm):02d}"
+
+
+_KEY = "runtime_config"
+_lock = threading.Lock()
+_cache: RuntimeConfig | None = None
+
+
+def get_config() -> RuntimeConfig:
+    global _cache
+    with _lock:
+        if _cache is None:
+            from app.kv import kv_get
+
+            stored = kv_get(_KEY, {}) or {}
+            try:
+                _cache = RuntimeConfig.model_validate(stored)
+            except Exception:
+                # Campo inválido salvo por uma versão antiga: mantém o que for válido.
+                base = RuntimeConfig().model_dump()
+                for k, v in stored.items():
+                    trial = dict(base, **{k: v})
+                    try:
+                        RuntimeConfig.model_validate(trial)
+                        base = trial
+                    except Exception:
+                        continue
+                _cache = RuntimeConfig.model_validate(base)
+        return _cache
+
+
+def update_config(patch: dict) -> RuntimeConfig:
+    global _cache
+    from app.kv import kv_set
+
+    current = get_config().model_dump()
+    current.update({k: v for k, v in patch.items() if k in RuntimeConfig.model_fields})
+    new = RuntimeConfig.model_validate(current)
+    with _lock:
+        kv_set(_KEY, new.model_dump(mode="json"))
+        _cache = new
+    return new
+
+
+def reset_cache() -> None:
+    global _cache
+    with _lock:
+        _cache = None

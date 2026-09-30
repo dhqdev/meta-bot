@@ -1,0 +1,4 @@
+config
+tests
+*.md
+!LICENSE-gmag11.md
