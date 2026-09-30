@@ -1,0 +1,183 @@
+# Testa e publica as imagens do Meta-Bot no GitHub Container Registry (ghcr.io).
+#   - push/PR: testes do backend (+ bridge do MT5), build do frontend e teste de ponta a ponta
+#   - push na main ou tag v*: publica ghcr.io/<dono>/meta-bot-{backend,frontend,mt5}
+#     com as tags latest (main), sha-xxxxxxx e a versão da tag
+#   - opcional: secret PORTAINER_WEBHOOK_URL (uma ou mais URLs de webhook de serviço/stack do
+#     Portainer, separadas por espaço ou linha) para atualizar a stack sozinha depois do build
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publicar as imagens no GHCR"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend (testes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          # 3.9 = Python que roda dentro do Wine no container do MT5 (bridge); 3.12 = backend
+          python-version: |
+            3.9
+            3.12
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Instalar dependências
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+      - name: Testes (estratégias, backtest, bridge MT5, API, agentes, IA)
+        working-directory: backend
+        run: python -m pytest -q
+      - name: Bridge do MT5 compila no Python 3.9 (o mesmo do Wine)
+        run: python3.9 -m py_compile mt5/Metatrader/bridge/metabot_bridge.py
+
+  frontend:
+    name: Frontend (build + ponta a ponta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Instalar dependências
+        run: |
+          pip install -r backend/requirements.txt
+          cd frontend && npm ci
+      - name: Typecheck e build
+        working-directory: frontend
+        run: npm run build
+      - name: Chromium do Playwright
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Subir backend (mercado simulado) e frontend
+        run: |
+          mkdir -p /tmp/metabot
+          cd backend
+          MB_DATA_DIR=/tmp/metabot MB_ADMIN_EMAIL=ci@example.com MB_ADMIN_PASSWORD=SenhaDoCi123 \
+          MB_NETWORK_ENABLED=false nohup python -m uvicorn app.main:app --port 8000 > /tmp/metabot/backend.log 2>&1 &
+          cd ../frontend
+          nohup npx vite preview --port 4173 --strictPort > /tmp/metabot/frontend.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/api/health > /dev/null && curl -sf http://127.0.0.1:4173 > /dev/null && exit 0
+            sleep 1
+          done
+          echo "servidores não subiram"; cat /tmp/metabot/*.log; exit 1
+      - name: Teste de ponta a ponta
+        working-directory: frontend
+        env:
+          BASE_URL: http://127.0.0.1:4173
+          E2E_EMAIL: ci@example.com
+          E2E_PASSWORD: SenhaDoCi123
+        run: node e2e/smoke.mjs
+      - name: Logs e capturas
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e
+          path: |
+            frontend/e2e/out/
+            /tmp/metabot/*.log
+          if-no-files-found: ignore
+
+  images:
+    name: Imagem ${{ matrix.name }}
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: backend
+          - name: frontend
+            context: frontend
+          - name: mt5
+            context: mt5
+    steps:
+      - uses: actions/checkout@v5
+      - name: Decidir se publica
+        id: pub
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] || { [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.publish }}" = "true" ]; }; then
+            echo "push=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        if: steps.pub.outputs.push == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ steps.pub.outputs.owner }}/meta-bot-${{ matrix.name }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+          labels: |
+            org.opencontainers.image.title=meta-bot-${{ matrix.name }}
+            org.opencontainers.image.description=Meta-Bot: escritório de agentes de trading (${{ matrix.name }})
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: ${{ steps.pub.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    name: Atualizar stack no Portainer
+    needs: images
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar webhook(s) do Portainer
+        env:
+          HOOKS: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          if [ -z "$HOOKS" ]; then
+            echo "Sem PORTAINER_WEBHOOK_URL: atualize a stack pelo Portainer (Update the stack > Re-pull image)."
+            exit 0
+          fi
+          for url in $HOOKS; do
+            curl -fsS -X POST "$url" > /dev/null && echo "webhook chamado" || { echo "falha ao chamar um webhook"; exit 1; }
+          done

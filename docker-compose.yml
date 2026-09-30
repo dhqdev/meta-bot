@@ -1,0 +1,71 @@
+# Meta-Bot completo na sua máquina ou num servidor sem Swarm/Traefik:
+#   cp .env.example .env   (preencha as senhas)
+#   docker compose up -d --build
+#   abra http://localhost:8080  (o MetaTrader 5 fica em http://localhost:8080/mt5/)
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina POSTGRES_PASSWORD no .env}
+      TZ: America/Sao_Paulo
+    volumes:
+      - metabot_pg:/var/lib/postgresql/data
+
+  metabot-api:
+    build: ./backend
+    image: ghcr.io/dhqdev/meta-bot-backend:latest
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      MB_SECRET_KEY: ${MB_SECRET_KEY:?defina MB_SECRET_KEY no .env}
+      MB_DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/metabot
+      MB_ADMIN_EMAIL: ${MB_ADMIN_EMAIL:-}
+      MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-}
+      MB_COOKIE_SECURE: ${MB_COOKIE_SECURE:-false}
+      MB_MT5_BRIDGE_URL: http://metabot-mt5:8001
+      MB_MT5_BRIDGE_TOKEN: ${MT5_BRIDGE_TOKEN:?defina MT5_BRIDGE_TOKEN no .env}
+      MB_OPENROUTER_API_KEY: ${MB_OPENROUTER_API_KEY:-}
+      MB_ANTHROPIC_API_KEY: ${MB_ANTHROPIC_API_KEY:-}
+      MB_PUBLIC_URL: ${MB_PUBLIC_URL:-}
+      MB_TIMEZONE: America/Sao_Paulo
+      TZ: America/Sao_Paulo
+    volumes:
+      - metabot_data:/data
+
+  metabot-web:
+    build: ./frontend
+    image: ghcr.io/dhqdev/meta-bot-frontend:latest
+    restart: unless-stopped
+    depends_on: [metabot-api]
+    environment:
+      BACKEND_UPSTREAM: http://metabot-api:8000
+      MT5_UPSTREAM: http://metabot-mt5:3000
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+  metabot-mt5:
+    build: ./mt5
+    image: ghcr.io/dhqdev/meta-bot-mt5:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Sao_Paulo
+      SUBFOLDER: /mt5/
+      CUSTOM_USER: ${MT5_VNC_USER:-admin}
+      PASSWORD: ${MT5_VNC_PASSWORD:?defina MT5_VNC_PASSWORD no .env}
+      MT5_BRIDGE_TOKEN: ${MT5_BRIDGE_TOKEN}
+      MT5_LOGIN: ${MT5_LOGIN:-}
+      MT5_PASSWORD: ${MT5_PASSWORD:-}
+      MT5_SERVER: ${MT5_SERVER:-}
+      MT5_INSTALLER_URL: ${MT5_INSTALLER_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}
+    shm_size: "1gb"
+    volumes:
+      - metabot_mt5:/config
+
+volumes:
+  metabot_pg:
+  metabot_data:
+  metabot_mt5:

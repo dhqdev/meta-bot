@@ -11,3 +11,4 @@ cryptography==50.0.2
 psycopg[binary]==3.3.6
 defusedxml==0.7.1
 pyotp==2.10.0
+tzdata==2026.4

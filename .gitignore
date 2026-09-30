@@ -30,3 +30,6 @@ mt5/config/
 Thumbs.db
 .idea/
 .vscode/
+
+# Saída dos testes de ponta a ponta
+frontend/e2e/out/

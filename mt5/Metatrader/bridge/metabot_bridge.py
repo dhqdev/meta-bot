@@ -756,8 +756,8 @@ def _env_int(name: str) -> Optional[int]:
 def main() -> int:
     logging.basicConfig(level=os.environ.get("MT5_BRIDGE_LOG_LEVEL", "INFO"), format="%(asctime)s [bridge] %(message)s")
     token = os.environ.get("MT5_BRIDGE_TOKEN", "").strip()
-    if len(token) < 16:
-        log.error("MT5_BRIDGE_TOKEN ausente ou curto (mínimo 16 caracteres). Defina a mesma chave no mt5 e no backend.")
+    if len(token) < 16 or "TROQUE_" in token.upper():
+        log.error("MT5_BRIDGE_TOKEN ausente, curto (mínimo 16 caracteres) ou ainda com o valor de exemplo. Defina a mesma chave no mt5 e no backend.")
         return 2
     try:
         import MetaTrader5 as mt5  # type: ignore

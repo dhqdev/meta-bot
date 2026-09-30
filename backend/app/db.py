@@ -48,6 +48,42 @@ def configure(url: str) -> Engine:
     return engine
 
 
+def ensure_database(url: str, attempts: int = 30) -> None:
+    """No PostgreSQL, cria o banco (ex.: ``metabot``) se ele ainda não existir.
+
+    Permite usar um Postgres já existente na stack (ex.: ``postgres_postgres``)
+    informando só usuário e senha. Espera o servidor subir (até ~60 s).
+    """
+    import re
+    import time
+
+    from sqlalchemy import text
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+
+    u = make_url(url)
+    if not u.drivername.startswith("postgresql") or not u.database:
+        return
+    name = u.database
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", name):
+        raise RuntimeError(f"nome de banco inválido: {name}")
+    admin = create_engine(u.set(database="postgres"), isolation_level="AUTOCOMMIT", pool_pre_ping=True)
+    try:
+        for i in range(attempts):
+            try:
+                with admin.connect() as conn:
+                    exists = conn.execute(text("SELECT 1 FROM pg_database WHERE datname = :n"), {"n": name}).scalar()
+                    if not exists:
+                        conn.execute(text(f'CREATE DATABASE "{name}"'))
+                return
+            except OperationalError:
+                if i == attempts - 1:
+                    raise
+                time.sleep(2)
+    finally:
+        admin.dispose()
+
+
 def get_engine() -> Engine:
     if _engine is None:
         raise RuntimeError("banco não configurado: chame db.configure()")

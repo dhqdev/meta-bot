@@ -11,8 +11,8 @@ from fastapi.responses import JSONResponse
 
 from app import __version__
 from app.api import agents, auth, market, settings as settings_api, strategies, system, trades, ws
-from app.config import ensure_secret_key, get_settings
-from app.db import configure, init_db, session_scope
+from app.config import ensure_secret_key, get_settings, unfilled_placeholders
+from app.db import configure, ensure_database, init_db, session_scope
 from app.security import SecretBox, set_secret_box
 
 log = logging.getLogger("metabot")
@@ -24,7 +24,11 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 def _setup_core() -> None:
     settings = get_settings()
     logging.basicConfig(level=settings.log_level.upper(), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    pending = unfilled_placeholders(settings)
+    if pending:
+        raise RuntimeError(f"Troque os valores de exemplo (TROQUE_...) antes de subir: {', '.join(pending)}")
     set_secret_box(SecretBox(ensure_secret_key(settings)))
+    ensure_database(settings.resolved_database_url)
     configure(settings.resolved_database_url)
     init_db()
 
