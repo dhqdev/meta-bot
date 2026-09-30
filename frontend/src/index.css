@@ -1,0 +1,59 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/press-start-2p/400.css";
+
+@theme {
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-pixel: "Press Start 2P", monospace;
+  --color-ink: #0d121c;
+  --color-panel: #151c2b;
+  --color-panel2: #1b2436;
+  --color-line: #26324a;
+  --color-muted: #8a97b1;
+  --color-gold: #f5b041;
+  --color-up: #2ecc71;
+  --color-down: #e74c3c;
+  --color-sky: #5dade2;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-ink);
+  color: #e6ebf5;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #2b3852;
+  border-radius: 6px;
+}
+
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+@media (min-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 14px;
+  }
+}

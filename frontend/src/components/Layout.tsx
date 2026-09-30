@@ -1,0 +1,114 @@
+import { useQueryClient } from "@tanstack/react-query";
+import clsx from "clsx";
+import { Bot, Building2, CandlestickChart, LogOut, Power, Receipt, Settings, Sparkles, Users } from "lucide-react";
+import { useState } from "react";
+import { NavLink, Outlet } from "react-router";
+import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { patchSystem, useLive } from "../lib/live";
+import { Badge } from "./ui";
+
+const NAV = [
+  { to: "/", label: "Escritório", icon: Building2 },
+  { to: "/agentes", label: "Agentes", icon: Users },
+  { to: "/estrategias", label: "Estratégias", icon: Sparkles },
+  { to: "/mercado", label: "Mercado", icon: CandlestickChart },
+  { to: "/operacoes", label: "Operações", icon: Receipt },
+  { to: "/config", label: "Config.", icon: Settings },
+];
+
+export function StatusChips() {
+  const { system, connected } = useLive();
+  const mt5 = system.mt5 || {};
+  const mt5Tone = mt5.connected ? "green" : mt5.configured ? "red" : "slate";
+  const mt5Label = mt5.connected ? `MT5 ${mt5.server || "conectado"}` : mt5.configured ? "MT5 fora do ar" : "MT5 não configurado";
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge tone={system.mode === "live" ? "gold" : "blue"}>{system.mode === "live" ? "CONTA REAL/DEMO MT5" : "SIMULADO"}</Badge>
+      <Badge tone={mt5Tone}>{mt5Label}</Badge>
+      <Badge tone={system.data_source === "mt5" ? "green" : "purple"}>{system.data_source === "mt5" ? "dados do MT5" : "mercado simulado"}</Badge>
+      <Badge tone={system.ai ? "green" : "slate"}>
+        <Bot className="h-3 w-3" /> {system.ai ? "IA ligada" : "sem IA"}
+      </Badge>
+      {!connected && <Badge tone="red">reconectando…</Badge>}
+    </div>
+  );
+}
+
+export function PowerButton({ compact }: { compact?: boolean }) {
+  const { system } = useLive();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const running = !!system.running;
+  return (
+    <button
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          const res = await api.post<{ running: boolean }>("/api/system/running", { running: !running });
+          patchSystem({ running: res.running });
+          void qc.invalidateQueries();
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className={clsx(
+        "flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 font-pixel text-[9px] uppercase transition disabled:opacity-60",
+        running ? "bg-up text-ink hover:bg-emerald-300" : "bg-slate-700 text-slate-100 hover:bg-slate-600",
+      )}
+      title={running ? "Desligar: a equipe para de abrir operações (as abertas continuam protegidas)" : "Ligar o escritório"}
+    >
+      <Power className="h-4 w-4" />
+      {!compact && (running ? "Escritório aberto" : "Ligar escritório")}
+    </button>
+  );
+}
+
+export function Layout() {
+  const { logout, status } = useAuth();
+  return (
+    <div className="flex min-h-full flex-col">
+      <header className="sticky top-0 z-30 border-b border-line bg-ink/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-3 py-2 md:px-5">
+          <div className="flex items-center gap-2">
+            <div className="grid h-8 w-8 place-items-center rounded-lg bg-panel2">
+              <img src="/favicon.svg" alt="" className="pixelated h-6 w-6" />
+            </div>
+            <span className="whitespace-nowrap font-pixel text-[11px] text-gold">META-BOT</span>
+          </div>
+          <nav className="ml-4 hidden items-center gap-1 lg:flex">
+            {NAV.map((n) => (
+              <NavLink key={n.to} to={n.to} end={n.to === "/"} className={({ isActive }) => clsx("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm", isActive ? "bg-panel2 text-gold" : "text-slate-300 hover:bg-panel")}>
+                <n.icon className="h-4 w-4" /> {n.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="hidden 2xl:block">
+              <StatusChips />
+            </div>
+            <PowerButton />
+            <button onClick={() => void logout()} className="rounded-lg p-2 text-muted hover:bg-panel" title={`Sair (${status?.email ?? ""})`}>
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <div className="border-t border-line px-3 py-1.5 2xl:hidden">
+          <StatusChips />
+        </div>
+      </header>
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-24 pt-4 md:px-5 lg:pb-8">
+        <Outlet />
+      </main>
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] lg:hidden">
+        {NAV.map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.to === "/"} className={({ isActive }) => clsx("flex flex-col items-center gap-0.5 py-2 text-[10px]", isActive ? "text-gold" : "text-slate-400")}>
+            <n.icon className="h-5 w-5" />
+            {n.label}
+          </NavLink>
+        ))}
+      </nav>
+    </div>
+  );
+}
