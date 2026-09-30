@@ -115,12 +115,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # backend e frontend: Intel/AMD (x86_64) e ARM (aarch64, ex.: Oracle Ampere)
           - name: backend
             context: backend
+            platforms: linux/amd64,linux/arm64
           - name: frontend
             context: frontend
+            platforms: linux/amd64,linux/arm64
+          # Wine + MetaTrader 5 só existem para x86_64
           - name: mt5
             context: mt5
+            platforms: linux/amd64
     steps:
       - uses: actions/checkout@v5
       - name: Decidir se publica
@@ -134,6 +139,8 @@ jobs:
             echo "push=false" >> "$GITHUB_OUTPUT"
           fi
           echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+        if: contains(matrix.platforms, 'arm64')
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         if: steps.pub.outputs.push == 'true'
@@ -157,7 +164,10 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
-          platforms: linux/amd64
+          platforms: ${{ matrix.platforms }}
+          # Manifesto simples (sem atestados "unknown/unknown"), mais amigável ao Swarm/Portainer
+          provenance: false
+          sbom: false
           push: ${{ steps.pub.outputs.push == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
