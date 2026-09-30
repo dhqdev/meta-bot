@@ -1,4 +1,4 @@
-# Meta-Bot completo na sua máquina ou num servidor sem Swarm/Traefik:
+# Meta-Bot completo (com o MT5 em Docker) numa máquina Intel/AMD, sem Swarm/Traefik:
 #   cp .env.example .env   (preencha as senhas)
 #   docker compose up -d --build
 #   abra http://localhost:8080  (o MetaTrader 5 fica em http://localhost:8080/mt5/)
@@ -25,6 +25,7 @@ services:
       MB_ADMIN_PASSWORD: ${MB_ADMIN_PASSWORD:-}
       MB_COOKIE_SECURE: ${MB_COOKIE_SECURE:-false}
       MB_MT5_BRIDGE_URL: http://metabot-mt5:8001
+      MB_MT5_PANEL_URL: /mt5/
       MB_MT5_BRIDGE_TOKEN: ${MT5_BRIDGE_TOKEN:?defina MT5_BRIDGE_TOKEN no .env}
       MB_OPENROUTER_API_KEY: ${MB_OPENROUTER_API_KEY:-}
       MB_ANTHROPIC_API_KEY: ${MB_ANTHROPIC_API_KEY:-}

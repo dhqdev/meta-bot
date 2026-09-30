@@ -1,0 +1,2 @@
+# O .bat vai com quebras de linha do Windows também no download "raw" do GitHub
+*.bat -text

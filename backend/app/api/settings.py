@@ -45,6 +45,7 @@ def get_settings_view(user: User = Depends(current_user), office=Depends(get_off
             "openrouter": _key_view("openrouter_api_key", get_settings().openrouter_api_key),
             "usage": office.llm.usage_summary(),
         },
+        "mt5": {"panel_url": get_settings().mt5_panel_url},
     }
 
 

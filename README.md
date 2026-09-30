@@ -8,7 +8,7 @@
 - **Estratégias testadas de verdade**: 18 setups (Vilela One, IndicatorSpot, setups brasileiros e clássicos), backtest com custos e validação fora da amostra, ranking pela taxa de acerto.
 - **IA onde ajuda, regras onde precisa**: notícias, gerente e auditoria usam IA (OpenRouter ou Claude); estratégias, risco e caixa são 100% determinísticos.
 - **Skills que evoluem**: cada agente ganha XP e sobe de nível; a Estrategista evolui parâmetros; a Auditora registra lições que entram no prompt dos colegas.
-- **MetaTrader 5 em Docker**, com acesso pelo navegador e login em qualquer corretora.
+- **MetaTrader 5 de qualquer corretora**, num PC ou VPS Windows (ou em Docker numa máquina Intel/AMD). O Meta-Bot fala com ele por um bridge com token, e toda a inteligência fica no servidor.
 - **Pronto para o Portainer** (Docker Swarm + Traefik) em `trade.tekvosoft.com`, com imagens publicadas pelo GitHub Actions.
 - **Funciona no celular**: o escritório e todas as telas se adaptam à tela pequena.
 
@@ -23,7 +23,7 @@
 3. [Skills que evoluem](#skills-que-evoluem)
 4. [Estratégias e backtest](#estratégias-e-backtest)
 5. [Inteligência artificial (OpenRouter e Claude)](#inteligência-artificial-openrouter-e-claude)
-6. [MetaTrader 5 em Docker: qualquer corretora](#metatrader-5-em-docker-qualquer-corretora)
+6. [MetaTrader 5: qualquer corretora](#metatrader-5-qualquer-corretora)
 7. [Subir no Portainer (trade.tekvosoft.com)](#subir-no-portainer-tradetekvosoftcom)
 8. [Rodar na sua máquina](#rodar-na-sua-máquina)
 9. [Segurança](#segurança)
@@ -144,23 +144,20 @@ Opcional. Com a chave da Anthropic (`MB_ANTHROPIC_API_KEY` ou pela tela), o prov
 
 ![Configuração da IA](docs/img/ia.png)
 
-## MetaTrader 5 em Docker: qualquer corretora
+## MetaTrader 5: qualquer corretora
 
-A pasta [`mt5/`](mt5/) parte do projeto [gmag11/MetaTrader5-Docker](https://github.com/gmag11/MetaTrader5-Docker): Debian + Wine + MetaTrader 5, com a tela do Windows no navegador (KasmVNC). Mudanças do Meta-Bot:
+O MT5 **não roda na stack do servidor**. Ele fica onde funciona melhor: num PC ou VPS Windows, ou em Docker numa máquina Intel/AMD. Toda a inteligência continua no servidor: agentes, estratégias, risco, IA e decisões. Ao lado do MT5 roda só o **bridge do Meta-Bot** ([`mt5/Metatrader/bridge/metabot_bridge.py`](mt5/Metatrader/bridge/metabot_bridge.py)), um servidor HTTP pequeno, com **token obrigatório**. Ele expõe conta, símbolos, cotações, candles, posições, ordens e histórico, e envia, fecha e modifica ordens, escolhendo o tipo de preenchimento que a corretora aceita.
 
-- o servidor RPyC aberto foi trocado por um **bridge HTTP próprio** (`mt5/Metatrader/bridge/metabot_bridge.py`), com **token obrigatório**, que expõe conta, símbolos, cotações, candles, posições, ordens e histórico, e envia/fecha/modifica ordens (escolhendo o tipo de preenchimento aceito pela corretora);
-- o painel web fica em **`/mt5/`** e só abre para quem está logado no Meta-Bot (e ainda pede a senha do painel);
-- o bridge nunca é publicado para fora: só o backend fala com ele, pela rede interna da stack.
+```
+Meta-Bot (servidor)  ──HTTP + token, via Tailscale──►  bridge  ──►  MetaTrader 5  ──►  corretora
+```
 
-**Dá para usar qualquer corretora?** Sim, qualquer uma que ofereça MetaTrader 5 (forex, índices, cripto e corretoras brasileiras com MT5 para B3):
-
-1. **Pelo painel** (`https://trade.tekvosoft.com/mt5/`): *Arquivo → Abrir uma conta*, procure a corretora pelo nome e entre com a sua conta. Fica salvo no volume.
-2. **Pela tela do Meta-Bot** (Config. → MetaTrader 5): informe conta, senha e servidor; o Tito faz o login pelo bridge (senha criptografada no banco).
-3. **Por variável** (`MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`) na stack.
-4. **Corretora com instalador próprio do MT5**: troque `MT5_INSTALLER_URL` antes da primeira inicialização.
-5. **Várias corretoras ao mesmo tempo**: suba um serviço `mt5` por conta e cadastre cada um em Config. → MetaTrader 5; o terminal marcado como ativo é o usado.
-
-Limitações: o MT5 roda só em servidor **x86_64/amd64** (o backend e o frontend também rodam em **ARM**, ex.: Oracle Ampere). Com servidor ARM, adicione um nó Intel/AMD ao Swarm — o serviço `metabot-mt5` vai para ele sozinho — ou deixe `replicas: 0` e use o mercado simulado; a primeira inicialização baixa e instala Mono, MT5 e Python no Wine (**5 a 10 minutos**); algumas corretoras exigem aceite de termos no primeiro login pelo painel. Detalhes em [`mt5/README.md`](mt5/README.md).
+- **PC ou VPS Windows (recomendado):** MT5 da corretora com o **Algo Trading** ligado, Python 3.12 e o [`iniciar-bridge.bat`](mt5/windows/iniciar-bridge.bat). Passo a passo completo em [`mt5/windows/LEIA-ME.md`](mt5/windows/LEIA-ME.md).
+- **Linux Intel/AMD com Docker:** [`deploy/mt5-remoto.yml`](deploy/mt5-remoto.yml) sobe o MT5 no Wine (base [gmag11/MetaTrader5-Docker](https://github.com/gmag11/MetaTrader5-Docker)) com o bridge incluso e painel web.
+- **Ligação com o servidor:** [Tailscale](https://tailscale.com), uma rede privada grátis. A porta do bridge fica liberada só para a rede do Tailscale (pelo firewall do Windows ou publicando a porta no IP do Tailscale), e toda requisição precisa do token.
+- **No Meta-Bot:** coloque `MB_MT5_BRIDGE_URL=http://IP-DO-TAILSCALE:8001` na stack, ou cadastre em **Config. → MetaTrader 5** e clique em *Testar*.
+- **Qualquer corretora que ofereça MT5:** forex, índices, cripto e corretoras brasileiras com MT5 para B3. Para usar várias ao mesmo tempo, rode um MT5 e um bridge por conta e cadastre cada um. O terminal marcado como ativo é o usado.
+- **Ordens de verdade** só depois de **Config. → Modo de operação → Usar a conta do MT5**. Antes disso, o sistema usa os preços da corretora e opera no simulado. O Meta-Bot só mexe nas posições com o *magic number* dele.
 
 Enquanto o MT5 não está conectado, o sistema usa um **mercado simulado** (determinístico, com sessões, volatilidade por hora e regimes) para você ver a equipe trabalhando desde o primeiro minuto.
 
@@ -185,18 +182,17 @@ Como o repositório é público, as imagens também são: o Portainer baixa sem 
 | `MB_SECRET_KEY` | 64 caracteres aleatórios (`openssl rand -hex 32`). Guarde: ela criptografa as chaves salvas. |
 | `MB_DATABASE_URL` | a senha do seu Postgres no lugar de `TROQUE_SENHA_DO_POSTGRES` (caracteres especiais em formato de URL, ex.: `@` → `%40`). |
 | `MB_ADMIN_EMAIL` / `MB_ADMIN_PASSWORD` | o seu login no Meta-Bot (criado na primeira inicialização). |
-| `MB_MT5_BRIDGE_TOKEN` e `MT5_BRIDGE_TOKEN` | **o mesmo** valor aleatório nos dois serviços (`openssl rand -hex 24`). |
-| `PASSWORD` (serviço mt5) | a senha do painel web do MT5. |
+| `MB_MT5_BRIDGE_TOKEN` | valor aleatório (`openssl rand -hex 24`). O **mesmo** valor vai no `iniciar-bridge.bat` da máquina do MT5. |
+| `MB_MT5_BRIDGE_URL` | endereço do bridge, ex.: `http://100.101.102.103:8001`. Pode ficar vazio: o sistema usa o mercado simulado até você ligar o MT5. |
 | `MB_OPENROUTER_API_KEY` | a sua chave do OpenRouter (pode deixar vazio e cadastrar depois pela tela). |
-| `MT5_LOGIN` / `MT5_PASSWORD` / `MT5_SERVER` | opcional: login automático na corretora. |
 
-O backend **se recusa a subir** se algum `TROQUE_...` ficar para trás (e o bridge do MT5 recusa token de exemplo). Clique em *Deploy the stack*.
+O backend **se recusa a subir** se algum `TROQUE_...` ficar para trás. O bridge do MT5 também recusa o token de exemplo. Clique em *Deploy the stack*. A stack roda em servidores Intel/AMD e ARM.
 
-**4. Primeiro acesso.** Abra `https://trade.tekvosoft.com`, entre com o e-mail e a senha que definiu, ative a verificação em duas etapas em **Config. → Segurança** e, se quiser, apague `MB_ADMIN_EMAIL`/`MB_ADMIN_PASSWORD` da stack. Conecte a corretora (seção anterior) e clique em **Ligar escritório**.
+**4. Primeiro acesso.** Abra `https://trade.tekvosoft.com`, entre com o e-mail e a senha que definiu, ative a verificação em duas etapas em **Config. → Segurança** e, se quiser, apague `MB_ADMIN_EMAIL`/`MB_ADMIN_PASSWORD` da stack. Clique em **Ligar escritório**. Quando quiser, ligue o MetaTrader 5 (seção anterior).
 
 **5. Atualizações.** Depois de cada build: *Stacks → metabot → Update the stack → Re-pull image*. Para automatizar, crie webhooks dos serviços no Portainer e salve as URLs (separadas por espaço) no secret `PORTAINER_WEBHOOK_URL` do repositório: o job `deploy` chama todas no fim do CI.
 
-Dados persistentes: volume `metabot_data` (backend), volume `metabot_mt5` (Wine, MT5, contas e perfis) e o banco `metabot` no seu Postgres.
+Dados persistentes: volume `metabot_data` (backend) e o banco `metabot` no seu Postgres.
 
 ## Rodar na sua máquina
 
@@ -205,7 +201,7 @@ Dados persistentes: volume `metabot_data` (backend), volume `metabot_mt5` (Wine,
 ```bash
 cp .env.example .env        # preencha as senhas e, se quiser, a chave do OpenRouter
 docker compose up -d --build
-# http://localhost:8080  (MT5 em http://localhost:8080/mt5/)
+# http://localhost:8080  (máquina Intel/AMD: MT5 em Docker junto, painel em http://localhost:8080/mt5/)
 ```
 
 **Desenvolvimento** (sem Docker, SQLite e mercado simulado):
@@ -232,7 +228,7 @@ Sem `MB_ADMIN_*`, o backend mostra no log um **código de configuração** para 
 - Chaves de IA, token do bridge e senha da corretora ficam **criptografados** no banco (Fernet, derivado de `MB_SECRET_KEY`); a tela só mostra a versão mascarada.
 - Ligar o modo **conta da corretora** exige senha, confirmação explícita e MT5 conectado; trocar chaves e terminais também pede a senha.
 - *Kill switch* e limites de perda diária/drawdown da Rita; ao desligar o escritório, as posições abertas continuam protegidas pelo Caio.
-- Painel do MT5 atrás do login do Meta-Bot (`auth_request` no nginx) **e** da senha do painel; bridge com token, só na rede interna.
+- Bridge do MT5 com token e acessível só pela rede privada do Tailscale. No docker-compose local, o painel do MT5 fica atrás do login do Meta-Bot (`auth_request` no nginx) **e** da senha do painel.
 - Conteúdo das notícias é tratado como dado externo no prompt (instruções dentro delas são ignoradas) e toda resposta da IA é validada antes de ser usada; a IA nunca envia ordens diretamente — passa sempre pelas regras de risco e caixa.
 
 ## Configurações
@@ -251,12 +247,13 @@ Variáveis de ambiente (prefixo `MB_`, backend):
 | `MB_COOKIE_SECURE` | `false` | `true` atrás de HTTPS. |
 | `MB_PUBLIC_URL` | — | endereço público (identifica o app no OpenRouter). |
 | `MB_ALLOWED_ORIGINS` | — | origens extras aceitas (separadas por vírgula). |
-| `MB_MT5_BRIDGE_URL` / `MB_MT5_BRIDGE_TOKEN` | `http://mt5:8001` / — | terminal MT5 padrão. |
+| `MB_MT5_BRIDGE_URL` / `MB_MT5_BRIDGE_TOKEN` | — | terminal "MT5 principal" (segue a stack a cada inicialização; vazio = nenhum). |
+| `MB_MT5_PANEL_URL` | — | link do painel web do MT5 na tela, se houver (ex.: `/mt5/` no docker-compose local). |
 | `MB_OPENROUTER_API_KEY` | — | chave do OpenRouter. |
 | `MB_ANTHROPIC_API_KEY` | — | chave da Anthropic (opcional). |
 | `MB_TIMEZONE` | `America/Sao_Paulo` | fuso usado na tela e no diário. |
 
-Variáveis do container do MT5 (`MT5_BRIDGE_TOKEN`, `MT5_LOGIN`, `MT5_INSTALLER_URL`, `SUBFOLDER`, `CUSTOM_USER`, `PASSWORD`…) estão descritas em [`mt5/README.md`](mt5/README.md).
+Variáveis do bridge e do container do MT5 (`MT5_BRIDGE_TOKEN`, `MT5_BRIDGE_PORT`, `MT5_TERMINAL_PATH`, `MT5_LOGIN`, `MT5_INSTALLER_URL`…) estão em [`mt5/README.md`](mt5/README.md) e [`mt5/windows/LEIA-ME.md`](mt5/windows/LEIA-ME.md).
 
 ## Estrutura do projeto e API
 
@@ -273,8 +270,9 @@ meta-bot/
 │   ├── src/office/          mapa, sprites, pathfinding (A*), cenário e motor de animação
 │   ├── nginx/               proxy de /api, /ws e /mt5 (com auth_request)
 │   └── e2e/smoke.mjs        teste de ponta a ponta (Playwright)
-├── mt5/                     MetaTrader 5 em Docker (base gmag11) + bridge HTTP do Meta-Bot
+├── mt5/                     bridge HTTP do Meta-Bot, kit Windows (mt5/windows) e MT5 em Docker (base gmag11)
 ├── deploy/portainer-stack.yml   stack do Portainer (Swarm + Traefik)
+├── deploy/mt5-remoto.yml    MT5 em Docker numa máquina Linux Intel/AMD, via Tailscale
 ├── docker-compose.yml       tudo local com Docker Compose
 └── .github/workflows/ci.yml testes, e2e e imagens no GHCR
 ```

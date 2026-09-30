@@ -34,8 +34,11 @@ class Settings(BaseSettings):
     # Dono do sistema criado na primeira inicialização (opcional; senão, código de setup nos logs).
     admin_email: str = ""
     admin_password: str = ""
-    # Terminal MetaTrader 5 padrão (container mt5 da stack).
-    mt5_bridge_url: str = "http://mt5:8001"
+    # Terminal MetaTrader 5 padrão: bridge ao lado do MT5 (container, PC ou VPS Windows).
+    # Vazio = nenhum terminal criado automaticamente (cadastre pela tela Config.).
+    mt5_bridge_url: str = ""
+    # Endereço do painel web do MT5, se houver (ex.: /mt5/ no docker-compose local).
+    mt5_panel_url: str = ""
     mt5_bridge_token: str = ""
     mt5_timeout_seconds: float = 20.0
     # IA (as chaves também podem ser cadastradas pela tela, criptografadas no banco).

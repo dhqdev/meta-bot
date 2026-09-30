@@ -1,19 +1,24 @@
 # Meta-Bot — stack para o Portainer (Docker Swarm + Traefik), no mesmo padrão das outras stacks:
 # rede externa network_public, Traefik com websecure/letsencryptresolver e o Postgres já existente
 # (postgres_postgres). O banco "metabot" é criado sozinho na primeira inicialização.
+# Roda em servidores Intel/AMD (x86_64) e ARM (aarch64, ex.: Oracle Ampere).
+#
+# O MetaTrader 5 NÃO roda nesta stack: ele fica num PC/VPS Windows (ou numa máquina Linux x86_64)
+# com o bridge do Meta-Bot ao lado, ligado a este servidor pelo Tailscale. Toda a inteligência
+# (agentes, estratégias, risco, IA) fica aqui; o bridge só executa o que o sistema mandar.
+# Passo a passo: mt5/windows/LEIA-ME.md no repositório.
 #
 # Antes de subir, troque TODOS os valores TROQUE_... (gere com: openssl rand -hex 32).
 #   - MB_SECRET_KEY: 32+ caracteres. Guarde: se mudar, as chaves salvas pela tela precisam ser recadastradas.
 #   - Senha do Postgres na MB_DATABASE_URL: se tiver caracteres especiais (@ : / # ?), use a forma
 #     codificada para URL (ex.: @ vira %40).
-#   - MT5_BRIDGE_TOKEN: o MESMO valor no metabot-api (MB_MT5_BRIDGE_TOKEN) e no metabot-mt5.
+#   - MB_MT5_BRIDGE_TOKEN: o MESMO valor vai no iniciar-bridge.bat da máquina do MT5.
+#   - MB_MT5_BRIDGE_URL: endereço do bridge (ex.: http://100.101.102.103:8001, IP do Tailscale da
+#     máquina do MT5). Vazio = sistema no mercado simulado; também dá para cadastrar pela tela Config.
 #   - MB_OPENROUTER_API_KEY: com ela a IA já liga com modelos econômicos para cada agente
 #     (também dá para cadastrar depois, pela tela Config.).
 #
-# Endereços:
-#   https://trade.tekvosoft.com        → Meta-Bot (escritório dos agentes e telas)
-#   https://trade.tekvosoft.com/mt5/   → MetaTrader 5 no navegador (exige estar logado no Meta-Bot)
-#
+# Endereço: https://trade.tekvosoft.com
 # Imagens públicas publicadas pelo GitHub Actions no GHCR (ghcr.io/dhqdev/meta-bot-*), a cada push na main.
 # Para atualizar: Stacks → metabot → Update the stack → marque "Re-pull image" → Update.
 version: "3.7"
@@ -31,8 +36,8 @@ services:
       - MB_COOKIE_SECURE=true
       - MB_PUBLIC_URL=https://trade.tekvosoft.com
       - MB_ALLOWED_ORIGINS=https://trade.tekvosoft.com
-      # MetaTrader 5 (container metabot-mt5 desta stack)
-      - MB_MT5_BRIDGE_URL=http://metabot-mt5:8001
+      # MetaTrader 5 remoto (PC/VPS Windows com o bridge do Meta-Bot, via Tailscale)
+      - MB_MT5_BRIDGE_URL=
       - MB_MT5_BRIDGE_TOKEN=TROQUE_TOKEN_DO_BRIDGE_MT5
       # IA: cole a chave do OpenRouter (sk-or-v1-...) na linha abaixo. Claude direto é opcional.
       - MB_OPENROUTER_API_KEY=
@@ -61,7 +66,6 @@ services:
     image: ghcr.io/dhqdev/meta-bot-frontend:latest
     environment:
       - BACKEND_UPSTREAM=http://metabot-api:8000
-      - MT5_UPSTREAM=http://metabot-mt5:3000
       - TZ=America/Sao_Paulo
     networks:
       - network_public
@@ -83,52 +87,9 @@ services:
         - traefik.http.routers.metabot.service=metabot-service
         - traefik.http.services.metabot-service.loadbalancer.server.port=80
 
-  metabot-mt5:
-    image: ghcr.io/dhqdev/meta-bot-mt5:latest
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=America/Sao_Paulo
-      - SUBFOLDER=/mt5/
-      # Senha do painel web do MT5 (pedida depois do login do Meta-Bot)
-      - CUSTOM_USER=admin
-      - PASSWORD=TROQUE_SENHA_DO_PAINEL_MT5
-      # Mesmo valor de MB_MT5_BRIDGE_TOKEN
-      - MT5_BRIDGE_TOKEN=TROQUE_TOKEN_DO_BRIDGE_MT5
-      # Opcional: login automático na corretora (ou entre pelo painel /mt5/ ou pela tela Config.)
-      - MT5_LOGIN=
-      - MT5_PASSWORD=
-      - MT5_SERVER=
-      # Corretora com instalador próprio do MT5: troque a URL antes da primeira inicialização
-      - MT5_INSTALLER_URL=https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe
-    volumes:
-      - metabot_mt5:/config
-      - type: tmpfs
-        target: /dev/shm
-        tmpfs:
-          size: 1073741824
-    networks:
-      - metabot_internal
-    deploy:
-      mode: replicated
-      replicas: 1
-      update_config:
-        order: stop-first
-      restart_policy:
-        condition: any
-        delay: 10s
-      placement:
-        constraints:
-          # Wine + MetaTrader 5 só rodam em Intel/AMD (x86_64). Em servidor ARM (ex.: Oracle Ampere)
-          # este serviço fica "pending" até existir um nó x86_64 no Swarm (manager ou worker).
-          # Enquanto isso, deixe replicas: 0; o resto do sistema funciona com o mercado simulado.
-          - node.platform.arch == x86_64
-
 volumes:
   metabot_data:
     name: metabot_data
-  metabot_mt5:
-    name: metabot_mt5
 
 networks:
   network_public:

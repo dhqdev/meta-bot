@@ -1,4 +1,4 @@
-"""Terminais MetaTrader 5 cadastrados (um container mt5 por conta de corretora)."""
+"""Terminais MetaTrader 5 cadastrados: um bridge por conta de corretora (container, PC ou VPS Windows)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ from app.security import box
 
 log = logging.getLogger("metabot.terminals")
 
+DEFAULT_NAME = "MT5 principal"
+
 
 class TerminalManager:
     def __init__(self, settings: Settings):
@@ -24,17 +26,30 @@ class TerminalManager:
         self._client_key: tuple | None = None
 
     def ensure_default(self) -> None:
-        """Cria o terminal padrão (variáveis MB_MT5_*) se ainda não houver nenhum."""
+        """Terminal "MT5 principal" a partir de MB_MT5_BRIDGE_URL / MB_MT5_BRIDGE_TOKEN.
+
+        Ele segue a stack: se as variáveis mudarem, é atualizado na próxima inicialização.
+        Sem MB_MT5_BRIDGE_URL nada é criado (os terminais podem ser cadastrados pela tela)."""
+        url = (self.settings.mt5_bridge_url or "").strip().rstrip("/")
+        if not url:
+            return
+        token = self.settings.mt5_bridge_token
         with session_scope() as s:
-            if s.scalar(select(Terminal.id).limit(1)) is not None:
+            row = s.scalar(select(Terminal).where(Terminal.name == DEFAULT_NAME).limit(1))
+            if row is not None:
+                if row.bridge_url != url:
+                    log.info("terminal %s: endereço atualizado pela stack (%s)", DEFAULT_NAME, url)
+                    row.bridge_url = url
+                if token and box().decrypt(row.token_enc) != token:
+                    row.token_enc = box().encrypt(token)
                 return
-            token = self.settings.mt5_bridge_token
+            any_active = s.scalar(select(Terminal.id).where(Terminal.active.is_(True)).limit(1)) is not None
             s.add(
                 Terminal(
-                    name="MT5 principal",
-                    bridge_url=self.settings.mt5_bridge_url,
+                    name=DEFAULT_NAME,
+                    bridge_url=url,
                     token_enc=box().encrypt(token) if token else "",
-                    active=True,
+                    active=not any_active,
                 )
             )
 

@@ -1,0 +1,39 @@
+# MetaTrader 5 em Docker numa máquina Linux Intel/AMD (x86_64), FORA do Swarm, ligado ao Meta-Bot
+# pelo Tailscale. Alternativa ao PC/VPS Windows (mt5/windows/LEIA-ME.md).
+#
+#   1) Instale Docker e Tailscale nesta máquina (tailscale up) e anote o IP: tailscale ip -4
+#   2) Crie um arquivo .env ao lado deste com:
+#        TAILSCALE_IP=100.x.y.z            # IP do Tailscale DESTA máquina
+#        MT5_BRIDGE_TOKEN=...              # o mesmo MB_MT5_BRIDGE_TOKEN da stack do Meta-Bot
+#        VNC_PASSWORD=...                  # senha do painel web do MT5
+#   3) docker compose -f mt5-remoto.yml up -d   (a primeira inicialização leva 5 a 10 min)
+#   4) Painel do MT5: http://100.x.y.z:3000 (usuário admin) → Arquivo → Abrir uma conta → sua corretora
+#      e ligue o "Algo Trading".
+#   5) No Meta-Bot: MB_MT5_BRIDGE_URL=http://100.x.y.z:8001 na stack (ou Config. → MetaTrader 5).
+#
+# As portas ficam só no IP do Tailscale: ninguém de fora da sua rede Tailscale alcança o bridge ou o painel.
+services:
+  mt5:
+    image: ghcr.io/dhqdev/meta-bot-mt5:latest
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: America/Sao_Paulo
+      CUSTOM_USER: admin
+      PASSWORD: ${VNC_PASSWORD:?defina VNC_PASSWORD no .env}
+      MT5_BRIDGE_TOKEN: ${MT5_BRIDGE_TOKEN:?defina MT5_BRIDGE_TOKEN no .env}
+      # Opcional: login automático na corretora
+      MT5_LOGIN: ${MT5_LOGIN:-}
+      MT5_PASSWORD: ${MT5_PASSWORD:-}
+      MT5_SERVER: ${MT5_SERVER:-}
+      MT5_INSTALLER_URL: ${MT5_INSTALLER_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}
+    ports:
+      - "${TAILSCALE_IP:?defina TAILSCALE_IP no .env}:8001:8001"   # bridge (usado pelo Meta-Bot)
+      - "${TAILSCALE_IP}:3000:3000"                                 # painel web do MT5
+    shm_size: "1gb"
+    volumes:
+      - mt5_config:/config
+
+volumes:
+  mt5_config:

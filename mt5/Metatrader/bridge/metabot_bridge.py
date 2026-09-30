@@ -1,16 +1,16 @@
 """Meta-Bot MT5 Bridge.
 
-API HTTP/JSON sobre o pacote oficial ``MetaTrader5`` do Python. Roda dentro do
-Wine (Python para Windows), ao lado do terminal MetaTrader 5, e deixa o backend
-do Meta-Bot (Linux) consultar cotações, histórico e enviar ordens para
-qualquer corretora em que o terminal estiver logado.
+API HTTP/JSON sobre o pacote oficial ``MetaTrader5`` do Python. Roda ao lado do
+terminal MetaTrader 5, num Windows (``mt5/windows/iniciar-bridge.bat``) ou dentro do
+Wine no container ``mt5``, e deixa o backend do Meta-Bot consultar cotações,
+histórico e enviar ordens para qualquer corretora em que o terminal estiver logado.
 
 Só usa a biblioteca padrão (compatível com Python 3.9, que é o do Wine) para
 não depender de nada além do próprio ``MetaTrader5``.
 
 Segurança: toda rota, exceto ``/ping``, exige ``Authorization: Bearer <token>``
 com o valor de ``MT5_BRIDGE_TOKEN``. Sem token configurado, o bridge recusa as
-requisições. A porta deve ficar só na rede interna do Docker.
+requisições. A porta deve ficar só numa rede privada (rede interna do Docker ou Tailscale).
 """
 
 from __future__ import annotations

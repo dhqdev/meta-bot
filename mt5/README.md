@@ -2,6 +2,8 @@
 
 Imagem do MetaTrader 5 rodando em Linux com **Wine**, com a tela do terminal acessível pelo navegador (**KasmVNC**) e o **bridge HTTP do Meta-Bot**, que deixa o backend consultar cotações, histórico e enviar ordens.
 
+> **Servidor ARM ou prefere Windows?** O MT5 não precisa rodar no servidor do Meta-Bot: veja o kit [`windows/`](windows/LEIA-ME.md) (MT5 num PC/VPS Windows) ou o [`deploy/mt5-remoto.yml`](../deploy/mt5-remoto.yml) (esta imagem numa máquina Linux Intel/AMD), ambos ligados ao servidor pelo Tailscale.
+
 Baseada em [gmag11/MetaTrader5-Docker](https://github.com/gmag11/MetaTrader5-Docker) (licença MIT, ver `LICENSE-gmag11.md`). O que mudou em relação ao original:
 
 | Original | Meta-Bot |

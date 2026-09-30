@@ -325,9 +325,20 @@ function MT5Card() {
   const [edit, setEdit] = useState<Partial<TerminalRow> & { token?: string; broker_password?: string } | null>(null);
   const [test, setTest] = useState<any>(null);
   const [prompt, setPrompt] = useState(false);
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<any>("/api/settings") });
+  const panelUrl: string = settings.data?.mt5?.panel_url || "";
   const mt5 = live.system.mt5 || {};
   return (
-    <Card title="MetaTrader 5 · qualquer corretora" actions={<a href="/mt5/" target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-sky hover:underline">abrir o terminal <ExternalLink className="h-3 w-3" /></a>}>
+    <Card
+      title="MetaTrader 5 · qualquer corretora"
+      actions={
+        panelUrl ? (
+          <a href={panelUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-sky hover:underline">
+            abrir o terminal <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : undefined
+      }
+    >
       <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
         <Badge tone={mt5.connected ? "green" : mt5.configured ? "red" : "slate"}>{mt5.connected ? "conectado" : mt5.configured ? "desconectado" : "não configurado"}</Badge>
         {mt5.connected && (
@@ -360,20 +371,31 @@ function MT5Card() {
             </div>
           </div>
         ))}
-        <Button variant="subtle" className="text-xs" onClick={() => setEdit({ name: "MT5 corretora 2", bridge_url: "http://mt5_2:8001", active: false })}>
-          <Plus className="h-3.5 w-3.5" /> Adicionar terminal (outra corretora)
+        {!q.data?.length && <p className="text-sm text-muted">Nenhum MetaTrader 5 ligado ainda: o sistema usa o mercado simulado.</p>}
+        <Button variant="subtle" className="text-xs" onClick={() => setEdit({ name: q.data?.length ? "MT5 corretora 2" : "MT5 principal", bridge_url: "http://", active: !q.data?.length })}>
+          <Plus className="h-3.5 w-3.5" /> {q.data?.length ? "Adicionar terminal (outra corretora)" : "Ligar um MetaTrader 5"}
         </Button>
         {test && <div className={`rounded-lg px-3 py-2 text-sm ${test.ok ? "bg-emerald-500/10 text-emerald-200" : "bg-red-500/10 text-red-200"}`}>{test.message}</div>}
       </div>
       <details className="mt-4 text-sm text-slate-300">
-        <summary className="cursor-pointer text-gold">Como entrar em qualquer corretora</summary>
+        <summary className="cursor-pointer text-gold">Como ligar um MetaTrader 5 (PC ou VPS Windows)</summary>
         <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted">
           <li>
-            Abra o terminal em <b>/mt5/</b> (link acima). Em <i>Arquivo → Abrir uma conta</i>, busque o nome da corretora (XP, Clear, Genial, IC Markets, Pepperstone, XM…), escolha o servidor e entre com sua conta. Pronto: o servidor fica salvo.
+            Numa máquina Windows sempre ligada, instale o MT5 da sua corretora, entre na conta (comece pela <b>demo</b>) e ligue o <b>Algo Trading</b> (botão verde na barra; em{" "}
+            <i>Ferramentas → Opções → Expert Advisors</i>, marque "Permitir negociação algorítmica").
           </li>
-          <li>Ou preencha conta, senha e servidor no terminal abaixo: o Tito faz o login pelo bridge (senha criptografada no banco).</li>
-          <li>Corretora que distribui MT5 próprio: use a variável <code>MT5_INSTALLER_URL</code> no container mt5 antes da primeira inicialização.</li>
-          <li>Várias corretoras ao mesmo tempo: suba um container mt5 por conta e cadastre cada um aqui; o ativo é o que o sistema usa.</li>
+          <li>
+            Na mesma máquina, rode o bridge do Meta-Bot com o <b>mesmo token</b> da stack (<code>MB_MT5_BRIDGE_TOKEN</code>): baixe o{" "}
+            <a className="text-sky underline" href="https://github.com/dhqdev/meta-bot/tree/main/mt5/windows" target="_blank" rel="noreferrer">
+              kit para Windows
+            </a>{" "}
+            e execute o <code>iniciar-bridge.bat</code>.
+          </li>
+          <li>
+            Ligue a máquina ao servidor com o <b>Tailscale</b> (grátis) e cadastre aqui o endereço <code>http://IP-DO-TAILSCALE:8001</code> com o token. Clique em <i>Testar</i>.
+          </li>
+          <li>Com o MT5 ligado, a equipe passa a usar os preços da corretora. Ordens de verdade só depois de clicar em "Usar a conta do MT5", em Modo de operação (pede senha).</li>
+          <li>Várias corretoras: um MT5 + um bridge por conta (portas 8001, 8002…), cada um cadastrado aqui; o ativo é o que o sistema usa.</li>
         </ol>
       </details>
       {edit && (
@@ -382,10 +404,10 @@ function MT5Card() {
             <Field label="Nome">
               <Input value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
             </Field>
-            <Field label="Endereço do bridge" hint="Na stack: http://mt5:8001">
+            <Field label="Endereço do bridge" hint="Ex.: http://100.101.102.103:8001 (IP do Tailscale da máquina do MT5)">
               <Input value={edit.bridge_url ?? ""} onChange={(e) => setEdit({ ...edit, bridge_url: e.target.value })} />
             </Field>
-            <Field label="Token do bridge" hint={edit.token_set ? "Deixe em branco para manter o atual." : "O mesmo MT5_BRIDGE_TOKEN do container."}>
+            <Field label="Token do bridge" hint={edit.token_set ? "Deixe em branco para manter o atual." : "O mesmo token configurado no bridge (MB_MT5_BRIDGE_TOKEN da stack)."}>
               <Input type="password" value={edit.token ?? ""} onChange={(e) => setEdit({ ...edit, token: e.target.value })} />
             </Field>
             <Field label="Conta (número)" hint="Opcional: login automático.">
