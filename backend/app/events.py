@@ -77,19 +77,29 @@ def record_activity(
     level: str = "info",
     data: dict | None = None,
     publish: bool = True,
+    db=None,
 ) -> None:
-    """Grava uma linha no histórico de atividade e avisa as telas abertas."""
+    """Grava uma linha no histórico de atividade e avisa as telas abertas.
+
+    Dentro de uma requisição que já escreveu no banco, passe ``db`` para gravar
+    na mesma transação (no SQLite, duas escritas simultâneas se bloqueiam).
+    """
     from app.db import session_scope
     from app.models import Activity
 
     ts = datetime.now(timezone.utc)
     row_id = None
+    row = Activity(ts=ts, agent=agent, kind=kind, level=level, text=text[:2000], data=data or {})
     try:
-        with session_scope() as s:
-            row = Activity(ts=ts, agent=agent, kind=kind, level=level, text=text[:2000], data=data or {})
-            s.add(row)
-            s.flush()
+        if db is not None:
+            db.add(row)
+            db.flush()
             row_id = row.id
+        else:
+            with session_scope() as s:
+                s.add(row)
+                s.flush()
+                row_id = row.id
     except Exception:  # o log nunca pode derrubar um agente
         log.exception("falha ao gravar atividade")
     if publish:

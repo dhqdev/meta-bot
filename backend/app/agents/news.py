@@ -49,8 +49,12 @@ ASSET_KEYWORDS: dict[str, list[str]] = {
     "IBOV": ["ibovespa", "ibov", "bolsa brasileira", "b3 "],
 }
 POSITIVE = ["surge", "soar", "rally", "jump", "gain", "rise", "rises", "beat", "strong", "hawkish", "hike", "record high", "upgrade", "bullish", "optimism", "boost", "rebound", "alta", "sobe", "dispara", "avança", "forte", "recorde", "otimismo", "salta", "valoriza"]
-NEGATIVE = ["plunge", "slump", "fall", "falls", "drop", "tumble", "miss", "weak", "dovish", "rate cut", "recession", "crisis", "war", "default", "downgrade", "bearish", "sell-off", "selloff", "fear", "slowdown", "queda", "cai", "despenca", "recua", "fraco", "crise", "guerra", "pessimismo", "desaba", "desvaloriza", "tombo"]
-HIGH_IMPACT = ["fomc", "rate decision", "interest rate decision", "decisão de juros", "nonfarm", "payroll", "cpi", "inflation data", "inflação", "war", "guerra", "default", "emergency", "crash", "bankruptcy", "falência", "copom", "selic", "sanction", "sanções", "tariff", "tarifa"]
+NEGATIVE = ["plunge", "slump", "fall", "falls", "drop", "tumble", "miss", "weak", "dovish", "rate cut", "default", "downgrade", "bearish", "sell-off", "selloff", "slowdown", "queda", "cai", "despenca", "recua", "fraco", "pessimismo", "desaba", "desvaloriza", "tombo"]
+# Aversão a risco: ruim para ações, cripto e moedas de risco; bom para os portos seguros.
+RISK_OFF = ["war", "guerra", "crisis", "crise", "recession", "recessão", "fear", "medo", "conflict", "conflito", "attack", "ataque", "invasion", "invasão", "sanction", "sanções"]
+SAFE_HAVENS = {"XAU", "XAG", "JPY", "CHF"}
+RISK_ASSETS = {"US500", "NAS100", "US30", "BTC", "ETH", "AUD", "NZD", "BRL", "IBOV", "OIL"}
+HIGH_IMPACT = ["fomc", "rate decision", "interest rate decision", "rate hike", "rate cut", "inflation", "decisão de juros", "juros", "nonfarm", "payroll", "cpi", "inflation data", "inflação", "war", "guerra", "default", "emergency", "crash", "bankruptcy", "falência", "copom", "selic", "sanction", "sanções", "tariff", "tarifa"]
 MEDIUM_IMPACT = ["gdp", "pib", "pmi", "retail sales", "vendas no varejo", "unemployment", "desemprego", "earnings", "balanço", "jobless", "ism", "consumer confidence"]
 
 IMPACT_WEIGHT = {"low": 0.4, "medium": 0.8, "high": 1.3}
@@ -66,10 +70,17 @@ def keyword_classify(title: str, summary: str) -> tuple[dict[str, float], str, s
     text = f" {title} {summary} ".lower()
     assets = [code for code, words in ASSET_KEYWORDS.items() if _count(text, words)]
     pos, neg = _count(text, POSITIVE), _count(text, NEGATIVE)
-    sentiment = 0.0 if pos == neg else (pos - neg) / (pos + neg) * 0.5
+    base = 0.0 if pos == neg else (pos - neg) / (pos + neg) * 0.5
+    risk_off = _count(text, RISK_OFF) > 0
     impact = "high" if _count(text, HIGH_IMPACT) else "medium" if _count(text, MEDIUM_IMPACT) else "low"
-    category = "monetary" if any(w in text for w in ("fed", "ecb", "boe", "boj", "copom", "selic", "rate")) else "other"
-    return {code: round(sentiment, 2) for code in assets}, impact, category
+    category = "monetary" if any(w in text for w in ("fed", "ecb", "boe", "boj", "copom", "selic", "rate")) else "geopolitics" if risk_off else "other"
+    out = {}
+    for code in assets:
+        s = base
+        if risk_off:
+            s += 0.35 if code in SAFE_HAVENS else -0.25 if code in RISK_ASSETS else 0.0
+        out[code] = round(max(-1.0, min(1.0, s)), 2)
+    return out, impact, category
 
 
 # ------------------------------------------------------- formato da IA

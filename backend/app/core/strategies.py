@@ -36,10 +36,11 @@ class Param:
         except (TypeError, ValueError):
             v = float(self.default)
         v = min(max(v, self.min), self.max)
+        steps = round((v - self.min) / self.step) if self.step > 0 else 0
+        v = min(self.min + steps * self.step, self.max)
         if self.kind == "int":
             return int(round(v))
-        steps = round((v - self.min) / self.step)
-        return round(self.min + steps * self.step, 6)
+        return round(v, 6)
 
     def values(self) -> list:
         if self.kind == "bool":

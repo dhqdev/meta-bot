@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, WebSocket
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -23,7 +23,11 @@ def user_from_token(db: Session, token: str | None) -> User | None:
     if row is None or row.expires_at < now:
         return None
     if now - row.last_seen_at > timedelta(minutes=5):
-        row.last_seen_at = now
+        # transação curta e separada: a requisição não fica segurando escrita no banco
+        from app.db import session_scope
+
+        with session_scope() as s:
+            s.execute(update(AuthSession).where(AuthSession.id == row.id).values(last_seen_at=now))
     return db.get(User, row.user_id)
 
 

@@ -147,7 +147,7 @@ def setup(body: SetupBody, request: Request, response: Response, db: Session = D
     token = _create_session(db, user, request)
     _set_cookie(response, token)
     SETUP_CODE["code"] = None
-    record_activity("system", f"Conta do dono criada ({email})", kind="security")
+    record_activity("system", f"Conta do dono criada ({email})", kind="security", db=db)
     return {"ok": True}
 
 
@@ -167,26 +167,26 @@ def login(body: LoginBody, request: Request, response: Response, db: Session = D
     if user.totp_enabled:
         if not body.code:
             return {"ok": False, "needs_code": True}
-        if not _verify_totp(user, body.code):
+        if not _verify_totp(user, body.code, db):
             _fail(f"ip:{ip}", f"email:{email}")
             raise HTTPException(status_code=401, detail="Código de verificação inválido.")
     token = _create_session(db, user, request)
     _set_cookie(response, token)
-    record_activity("system", f"Login de {email} (IP {ip})", kind="security")
+    record_activity("system", f"Login de {email} (IP {ip})", kind="security", db=db)
     return {"ok": True}
 
 
-def _verify_totp(user: User, code: str) -> bool:
+def _verify_totp(user: User, code: str, db: Session | None = None) -> bool:
     secret = box().decrypt(user.totp_secret_enc or "")
     if not secret:
         return False
     code = code.strip().replace(" ", "")
-    last = kv_get(f"totp_last:{user.id}")
+    last = kv_get(f"totp_last:{user.id}", None, db)
     if last == code:
         return False  # impede reuso do mesmo código
     ok = pyotp.TOTP(secret).verify(code, valid_window=1)
     if ok:
-        kv_set(f"totp_last:{user.id}", code)
+        kv_set(f"totp_last:{user.id}", code, db)
     return ok
 
 
@@ -215,7 +215,7 @@ def change_password(body: PasswordBody, request: Request, user: User = Depends(c
     user.password_hash = hash_password(body.new_password)
     current = token_hash(request.cookies.get(COOKIE_NAME, ""))
     db.execute(delete(AuthSession).where(AuthSession.user_id == user.id, AuthSession.token_hash != current))
-    record_activity("system", "Senha alterada (outras sessões encerradas)", kind="security")
+    record_activity("system", "Senha alterada (outras sessões encerradas)", kind="security", db=db)
     return {"ok": True}
 
 
@@ -239,18 +239,18 @@ def totp_enable(body: TotpBody, user: User = Depends(current_user), db: Session 
     user.totp_secret_enc = box().encrypt(secret)
     user.totp_enabled = True
     kv_set(f"totp_pending:{user.id}", None, db)
-    record_activity("system", "Verificação em duas etapas ativada", kind="security")
+    record_activity("system", "Verificação em duas etapas ativada", kind="security", db=db)
     return {"ok": True}
 
 
 @router.post("/2fa/disable")
 def totp_disable(body: TotpDisableBody, user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
-    if not verify_password(body.password, user.password_hash) or not _verify_totp(user, body.code):
+    if not verify_password(body.password, user.password_hash) or not _verify_totp(user, body.code, db):
         raise HTTPException(status_code=403, detail="Senha ou código inválido.")
     user = db.merge(user)
     user.totp_enabled = False
     user.totp_secret_enc = None
-    record_activity("system", "Verificação em duas etapas desativada", kind="security", level="warning")
+    record_activity("system", "Verificação em duas etapas desativada", kind="security", level="warning", db=db)
     return {"ok": True}
 
 
