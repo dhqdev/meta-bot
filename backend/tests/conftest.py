@@ -18,7 +18,7 @@ os.environ.update(
         "MB_NETWORK_ENABLED": "false",
         "MB_SECRET_KEY": "test-secret-key-only-for-tests-0123456789abcdef",
         "MB_MT5_BRIDGE_TOKEN": "",
-        "MB_ANTHROPIC_API_KEY": "",
+        "MB_OPENROUTER_API_KEY": "",
         "MB_ADMIN_EMAIL": "",
         "MB_ADMIN_PASSWORD": "",
     }
@@ -61,3 +61,18 @@ def office():
 
 def pytest_sessionfinish(session, exitstatus):
     shutil.rmtree(_TMP, ignore_errors=True)
+
+
+@pytest.fixture
+def client_owner():
+    """Cliente da API já com o dono criado e logado."""
+    from fastapi.testclient import TestClient
+
+    from app.api import auth as auth_api
+    from app.main import app
+
+    with TestClient(app) as c:
+        c.headers.update({"Origin": "http://testserver"})
+        r = c.post("/api/auth/setup", json={"email": "dono@example.com", "password": "SenhaForte123", "setup_code": auth_api.setup_code()})
+        assert r.status_code == 200, r.text
+        yield c

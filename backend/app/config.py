@@ -41,8 +41,7 @@ class Settings(BaseSettings):
     mt5_panel_url: str = ""
     mt5_bridge_token: str = ""
     mt5_timeout_seconds: float = 20.0
-    # IA (as chaves também podem ser cadastradas pela tela, criptografadas no banco).
-    anthropic_api_key: str = ""
+    # IA pelo OpenRouter (a chave também pode ser cadastrada pela tela, criptografada no banco).
     openrouter_api_key: str = ""
     # Endereço público do sistema (identifica o app no OpenRouter).
     public_url: str = ""

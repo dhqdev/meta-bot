@@ -13,7 +13,7 @@ from app.broker.mt5 import MT5Error, MT5Unavailable
 from app.db import session_scope
 from app.events import bus
 from app.kv import kv_get, kv_set
-from app.models import Activity, EquitySnapshot, SkillEvent
+from app.models import Activity, AgentMessage, EquitySnapshot, SkillEvent
 from app.runtime import get_config
 
 
@@ -109,7 +109,7 @@ class InfraAgent(Agent):
         if connected:
             self._healthy_streak += 1
             if self._announced_down:
-                self.say("MT5 de volta! ✅", "🔌")
+                self.tell("all", "🔌 " + self.line("mt5_up", server=str((self.status or {}).get("server") or "corretora")), kind="info")
                 self.log("Conexão com o MetaTrader 5 restabelecida", kind="mt5")
                 self.skills.gain("conexao_mt5", 10, "reconexão")
                 self._announced_down = False
@@ -123,7 +123,7 @@ class InfraAgent(Agent):
         self._healthy_streak = 0
         self.status = {"configured": True, "connected": False, "checked_at": now, "message": message}
         if not self._announced_down:
-            self.say(f"MT5 fora do ar: {message[:60]}", "⚠️")
+            self.tell("all", "⚠️ " + self.line("mt5_down") + f" ({message[:60]})", kind="alerta")
             self.log(f"MetaTrader 5 indisponível: {message}. Usando o mercado simulado enquanto isso.", kind="mt5", level="warning")
             self._announced_down = True
         self.set_state("alert", "server", f"MT5 indisponível: {message[:80]}", "⚠️")
@@ -178,5 +178,6 @@ class InfraAgent(Agent):
                     removed += s.execute(delete(Activity).where(Activity.id < keep_from)).rowcount or 0
             s.execute(delete(SkillEvent).where(SkillEvent.ts < datetime.now(timezone.utc) - timedelta(days=180), SkillEvent.kind == "xp"))
             s.execute(delete(EquitySnapshot).where(EquitySnapshot.ts < datetime.now(timezone.utc) - timedelta(days=400)))
+            s.execute(delete(AgentMessage).where(AgentMessage.ts < datetime.now(timezone.utc) - timedelta(days=60)))
         if removed:
             self.skills.gain("manutencao", 2, f"{removed} registros antigos removidos")

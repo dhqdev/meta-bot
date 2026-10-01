@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import re
 import threading
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 TIMEFRAMES = ["M5", "M15", "M30", "H1", "H4", "D1"]
 TIMEFRAME_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
@@ -33,32 +32,12 @@ DEFAULT_FEEDS = [
     NewsFeed(name="Investing.com Brasil", url="https://br.investing.com/rss/news.rss", lang="pt"),
 ]
 
-AI_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5", "claude-fable-5-1"]
-# Provedores de IA: "auto" usa a Anthropic se houver chave dela; senão, o OpenRouter.
-AI_PROVIDERS = ["auto", "anthropic", "openrouter"]
-# Modelos predefinidos no OpenRouter, escolhidos por economia (o sistema fica ligado o dia todo):
-# - Nina (notícias) roda a cada 15 min → modelo baratíssimo;
-# - Gustavo (gerente) decide entre candidatos já filtrados pelas regras → modelo leve e rápido;
-# - Aurora (auditora) escreve o diário e as lições 1x por dia → modelo melhor, custo irrisório.
-# A tela lista o catálogo completo do OpenRouter para trocar quando quiser.
-OPENROUTER_DEFAULTS = {
-    "news": "deepseek/deepseek-v4-flash",
-    "manager": "google/gemini-3.1-flash-lite",
-    "auditor": "anthropic/claude-haiku-4.5",
-    "fallback": "google/gemini-3.1-flash-lite",
-}
-OPENROUTER_SUGGESTIONS = [
-    "deepseek/deepseek-v4-flash",
-    "google/gemini-3.1-flash-lite",
-    "google/gemini-2.5-flash-lite",
-    "anthropic/claude-haiku-4.5",
-    "anthropic/claude-sonnet-5.5",
-    "anthropic/claude-opus-5.5",
-]
-_OR_MODEL = re.compile(r"^[a-z0-9][a-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*$")
+CONFIG_VERSION = 2
 
 
 class RuntimeConfig(BaseModel):
+    config_version: int = CONFIG_VERSION
+
     # --- Sistema
     system_running: bool = False
     mode: Literal["paper", "live"] = "paper"
@@ -66,7 +45,8 @@ class RuntimeConfig(BaseModel):
 
     # --- Ativos
     watchlist: list[str] = Field(default_factory=lambda: ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US500", "BTCUSD"])
-    timeframes: list[str] = Field(default_factory=lambda: ["M15", "H1", "H4"])
+    # M5 = operações curtas (scalper); M15/H1 = day trade; H4 = posições mais longas
+    timeframes: list[str] = Field(default_factory=lambda: ["M5", "M15", "H1", "H4"])
     enabled_strategies: list[str] = Field(default_factory=list)  # vazio = todas
 
     # --- Conta simulada
@@ -74,9 +54,15 @@ class RuntimeConfig(BaseModel):
     paper_commission_per_lot: float = Field(7.0, ge=0, le=500)
     paper_slippage_points: float = Field(2.0, ge=0, le=1000)
 
+    # --- Metas do dia (a Rita para a equipe ao bater qualquer uma; 0 = desligada)
+    daily_loss_limit: float = Field(3.0, ge=0, le=100_000_000)
+    daily_loss_unit: Literal["percent", "money"] = "percent"
+    daily_profit_target: float = Field(0.0, ge=0, le=100_000_000)
+    daily_profit_unit: Literal["percent", "money"] = "percent"
+    close_on_daily_limit: bool = True  # encerra as posições abertas quando bater o limite ou a meta
+
     # --- Risco (Rita)
     risk_per_trade_pct: float = Field(0.5, ge=0.05, le=5)
-    max_daily_loss_pct: float = Field(3.0, ge=0.5, le=20)
     max_drawdown_pct: float = Field(12.0, ge=2, le=50)
     max_open_positions: int = Field(3, ge=1, le=20)
     max_positions_per_symbol: int = Field(1, ge=1, le=5)
@@ -122,18 +108,12 @@ class RuntimeConfig(BaseModel):
     news_interval_minutes: int = Field(10, ge=2, le=240)
     news_feeds: list[NewsFeed] = Field(default_factory=lambda: [f.model_copy() for f in DEFAULT_FEEDS])
 
-    # --- IA (Claude direto na Anthropic ou qualquer modelo via OpenRouter)
+    # --- Daily (reunião de fim de dia com relatório e aprendizado)
+    daily_meeting_enabled: bool = True
+    daily_meeting_time: str = "19:00"
+
+    # --- IA (OpenRouter, modelo fixo por agente)
     ai_enabled: bool = True
-    ai_provider: str = "auto"
-    # Anthropic direto: modelo de cada agente
-    ai_model: str = "claude-sonnet-5-5"  # Gustavo (gerente)
-    ai_news_model: str = "claude-haiku-4-5"  # Nina (notícias)
-    ai_auditor_model: str = "claude-haiku-4-5"  # Aurora (auditora)
-    # OpenRouter: modelo de cada agente + reserva se o principal falhar
-    openrouter_manager_model: str = OPENROUTER_DEFAULTS["manager"]
-    openrouter_news_model: str = OPENROUTER_DEFAULTS["news"]
-    openrouter_auditor_model: str = OPENROUTER_DEFAULTS["auditor"]
-    openrouter_fallback_model: str = OPENROUTER_DEFAULTS["fallback"]
     # Economia: intervalo mínimo entre análises de notícias por IA e validade do plano da IA
     ai_news_interval_minutes: int = Field(15, ge=5, le=240)
     ai_plan_refresh_minutes: int = Field(60, ge=15, le=720)
@@ -168,37 +148,21 @@ class RuntimeConfig(BaseModel):
             raise ValueError("escolha pelo menos um tempo gráfico")
         return out
 
-    @field_validator("ai_model", "ai_news_model", "ai_auditor_model")
-    @classmethod
-    def _check_model(cls, value: str) -> str:
-        value = value.strip()
-        if not value.startswith("claude-"):
-            raise ValueError("modelo inválido")
-        return value
-
-    @field_validator("ai_provider")
-    @classmethod
-    def _check_provider(cls, value: str) -> str:
-        value = value.strip().lower()
-        if value not in AI_PROVIDERS:
-            raise ValueError("provedor de IA inválido")
-        return value
-
-    @field_validator("openrouter_manager_model", "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model")
-    @classmethod
-    def _check_openrouter_model(cls, value: str) -> str:
-        value = value.strip()
-        if len(value) > 120 or not _OR_MODEL.match(value):
-            raise ValueError("modelo do OpenRouter no formato fornecedor/modelo (ex.: anthropic/claude-opus-5.5)")
-        return value
-
-    @field_validator("b3_close_time")
+    @field_validator("b3_close_time", "daily_meeting_time")
     @classmethod
     def _check_time(cls, value: str) -> str:
         hh, _, mm = value.partition(":")
         if not (hh.isdigit() and mm.isdigit() and 0 <= int(hh) < 24 and 0 <= int(mm) < 60):
             raise ValueError("horário no formato HH:MM")
         return f"{int(hh):02d}:{int(mm):02d}"
+
+    @model_validator(mode="after")
+    def _check_daily_targets(self) -> "RuntimeConfig":
+        if self.daily_loss_unit == "percent" and self.daily_loss_limit > 50:
+            raise ValueError("limite de perda do dia: no máximo 50% do patrimônio")
+        if self.daily_profit_unit == "percent" and self.daily_profit_target > 100:
+            raise ValueError("meta de ganho do dia: no máximo 100% do patrimônio")
+        return self
 
 
 _KEY = "runtime_config"
@@ -212,7 +176,7 @@ def get_config() -> RuntimeConfig:
         if _cache is None:
             from app.kv import kv_get
 
-            stored = kv_get(_KEY, {}) or {}
+            stored = _migrate(kv_get(_KEY, {}) or {})
             try:
                 _cache = RuntimeConfig.model_validate(stored)
             except Exception:
@@ -227,6 +191,23 @@ def get_config() -> RuntimeConfig:
                         continue
                 _cache = RuntimeConfig.model_validate(base)
         return _cache
+
+
+def _migrate(stored: dict) -> dict:
+    """Converte a configuração salva por versões antigas para a atual."""
+    stored = dict(stored)
+    if int(stored.get("config_version") or 1) < 2:
+        if "max_daily_loss_pct" in stored and "daily_loss_limit" not in stored:
+            stored["daily_loss_limit"] = stored["max_daily_loss_pct"]
+            stored["daily_loss_unit"] = "percent"
+        tfs = list(stored.get("timeframes") or [])
+        if tfs and "M5" not in tfs:
+            stored["timeframes"] = ["M5", *tfs]
+        stored["config_version"] = CONFIG_VERSION
+    for old in ("max_daily_loss_pct", "ai_provider", "ai_model", "ai_news_model", "ai_auditor_model", "openrouter_manager_model",
+                "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model"):
+        stored.pop(old, None)
+    return stored
 
 
 def update_config(patch: dict) -> RuntimeConfig:

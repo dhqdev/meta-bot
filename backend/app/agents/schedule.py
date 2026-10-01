@@ -216,6 +216,10 @@ class ScheduleAgent(Agent):
             "best_hours_local": sorted(x["hour_local"] for x in best),
         }
 
+    def greet_fields(self) -> dict:
+        sessions = sessions_at(datetime.now(timezone.utc))
+        return {"sessions": ", ".join(sessions) if sessions else "nenhuma (mercados calmos)"}
+
     def hour_profile(self, symbol: str) -> dict:
         if symbol not in self._profiles:
             saved = kv_get(f"hour_profile:{symbol}")
@@ -250,7 +254,9 @@ class ScheduleAgent(Agent):
                 self._warned.add(key)
                 affected = [s for s in cfg.watchlist if ev["currency"] in symbol_currencies(s)]
                 self.work(f"Alerta: {ev['title']} ({ev['currency']}) em {int(minutes)} min", "agent:manager", "⏰")
-                self.say(f"⏰ {ev['title']} ({ev['currency']}) em {int(minutes)} min. Pausa em {', '.join(affected) or 'nenhum ativo'}", "⏰", to="manager")
+                self.tell("all", "⏰ " + self.line("event_soon", title=ev["title"], currency=ev["currency"], minutes=int(minutes), symbols=", ".join(affected) or "nenhum ativo"), kind="alerta", data={"event": ev["title"], "symbols": affected})
+                if affected:
+                    self.office.agent("manager").tell("schedule", self.office.agent("manager").line("ack_event", symbols=", ".join(affected)), kind="resposta")
                 self.log(f"Evento de alto impacto em {int(minutes)} min: {ev['title']} ({ev['currency']}). Entradas pausadas em {', '.join(affected) or 'nenhum ativo da lista'}.", kind="calendar", level="warning")
                 self.skills.gain("calendario_economico", 2, "alerta de evento")
         if len(self._warned) > 500:

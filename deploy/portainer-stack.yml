@@ -39,9 +39,8 @@ services:
       # MetaTrader 5 remoto (PC/VPS Windows com o bridge do Meta-Bot, via Tailscale)
       - MB_MT5_BRIDGE_URL=
       - MB_MT5_BRIDGE_TOKEN=TROQUE_TOKEN_DO_BRIDGE_MT5
-      # IA: cole a chave do OpenRouter (sk-or-v1-...) na linha abaixo. Claude direto é opcional.
+      # IA: cole a chave do OpenRouter (sk-or-v1-...) na linha abaixo. Cada agente já tem o seu modelo.
       - MB_OPENROUTER_API_KEY=
-      - MB_ANTHROPIC_API_KEY=
       - MB_TIMEZONE=America/Sao_Paulo
       - TZ=America/Sao_Paulo
     volumes:

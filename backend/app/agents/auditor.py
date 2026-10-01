@@ -4,38 +4,22 @@
   o backtest e, se o real estiver claramente abaixo do prometido, coloca a
   estratégia "em observação" para a Estela revalidar.
 - Dá XP para quem acertou (estratégia, gerente, notícias, risco, caixa).
-- Todo dia às 22h (horário de Brasília): diário de trading. Com IA,
-  escreve a análise e registra lições que entram no prompt do Gerente e da Nina.
+- Na daily das 19h, fecha a reunião com as lições do dia (veja ``daily.py``);
+  as lições entram no prompt dos agentes com IA no dia seguinte.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.agents.base import Agent, AgentProfile
-from app.agents.skills import SkillDef, add_lesson, playbook
-from app.config import get_settings
+from app.agents.skills import SkillDef, add_lesson
 from app.core.metrics import wilson_upper
 from app.core.strategies import REGISTRY
 from app.db import session_scope
-from app.kv import kv_get, kv_set
 from app.models import Lesson, StrategyProfile, Trade
-from app.services.llm import to_json
-
-
-class AILesson(BaseModel):
-    agent: str
-    text: str
-
-
-class AIJournal(BaseModel):
-    summary: str
-    lessons: list[AILesson]
-    mood: str
 
 
 class AuditorAgent(Agent):
@@ -45,7 +29,7 @@ class AuditorAgent(Agent):
         role="Auditoria",
         emoji="🎓",
         uses_ai=True,
-        description="Compara o resultado real com o backtest, distribui XP para a equipe, escreve o diário do dia e registra lições que os outros agentes passam a seguir.",
+        description="Compara o resultado real com o backtest, distribui XP para a equipe e fecha a daily das 19h com as lições que todos passam a seguir.",
     )
     interval = 60.0
     idle_task = "Auditando as operações"
@@ -56,12 +40,6 @@ class AuditorAgent(Agent):
     ]
 
     async def tick(self) -> None:
-        tz = ZoneInfo(get_settings().timezone)
-        now = datetime.now(tz)
-        today = now.date().isoformat()
-        if now.hour >= 22 and kv_get("auditor.last_journal") != today:
-            await self.daily_journal()
-            kv_set("auditor.last_journal", today)
         if self.due("prune", 7 * 86400):
             self.prune_lessons()
 
@@ -87,6 +65,7 @@ class AuditorAgent(Agent):
                         name = REGISTRY[prof.strategy].name if prof.strategy in REGISTRY else prof.strategy
                         msg = f"{name} em {prof.symbol} {prof.timeframe}: acerto real {wins}/{n} bem abaixo dos {expected:.0%} do backtest. Coloquei em observação para a Estela revalidar."
                         self.log(msg.replace(".", ",", 1), kind="audit", level="warning")
+                        self.tell("strategist", "🔎 " + self.line("observation", name=name, symbol=prof.symbol, timeframe=prof.timeframe), kind="pedido")
                         add_lesson("strategist", f"Resultado real abaixo do backtest em {name} {prof.symbol} {prof.timeframe}; revalidar antes de voltar a usar.", {"n": n, "wins": wins, "expected": expected})
                         self.skills.gain("licoes", 5, "desvio entre real e backtest detectado")
         strategist = self.office.agent("strategist")
@@ -99,56 +78,6 @@ class AuditorAgent(Agent):
                 self.office.agent("news").skills.gain("sentimento_ativos", 3, "notícias a favor de operação vencedora")
         self.office.agent("manager").on_trade_closed(trade)
         self.office.agent("risk").on_trade_closed(trade)
-
-    # -------------------------------------------------------------- diário
-    async def daily_journal(self) -> None:
-        tz = ZoneInfo(get_settings().timezone)
-        start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-        with session_scope() as s:
-            trades = list(s.scalars(select(Trade).where(Trade.status == "closed", Trade.exit_time >= start)))
-            rows = [
-                {
-                    "symbol": t.symbol, "strategy": t.strategy, "timeframe": t.timeframe, "direction": t.direction,
-                    "pnl": round(t.pnl, 2), "r": round(t.pnl_r, 2), "exit": t.exit_reason,
-                    "entry_hour_local": t.entry_time.astimezone(tz).hour, "mode": t.mode,
-                }
-                for t in trades
-            ]
-        self.work("Escrevendo o diário do dia", "desk", "📝")
-        total = sum(r["pnl"] for r in rows)
-        wins = sum(1 for r in rows if r["pnl"] > 0)
-        base = f"Dia com {len(rows)} operações, {wins} vencedoras, resultado {total:+.2f}.".replace(".", ",", 1) if rows else "Dia sem operações."
-        summary = base
-        if rows and self.office.llm.available():
-            res = await self.office.llm.complete_json(
-                agent=self.id,
-                purpose="diário do dia",
-                tier="auditor",
-                system=playbook("auditor"),
-                user=f"Operações de hoje:\n{to_json(rows)}\nRisco: {to_json(self.office.agent('risk').status())}",
-                schema_model=AIJournal,
-                effort="medium",
-                max_tokens=8000,
-            )
-            if res.ok and res.data is not None:
-                summary = f"{base} {res.data.summary}"
-                valid = {"manager", "strategist", "risk", "cashier", "news", "schedule", "all"}
-                for lesson in res.data.lessons[:3]:
-                    if lesson.agent in valid and lesson.text.strip():
-                        add_lesson(lesson.agent, lesson.text, {"day": start.date().isoformat()}, source="ai")
-                        self.skills.gain("licoes", 5, "lição registrada")
-        if rows:
-            losers = [r for r in rows if r["pnl"] <= 0]
-            by_hour: dict[int, list[float]] = {}
-            for r in losers:
-                by_hour.setdefault(r["entry_hour_local"], []).append(r["r"])
-            for hour, rs in by_hour.items():
-                if len(rs) >= 3:
-                    add_lesson("schedule", f"{len(rs)} perdas hoje com entrada às {hour}h (horário de Brasília): observar esse horário.", {"hour": hour, "r": rs})
-        self.log(f"📝 Diário do dia: {summary}", kind="journal")
-        self.say("📝 Diário do dia publicado", "📝")
-        self.skills.gain("diario", 5, "diário publicado")
-        self.idle("Auditando as operações")
 
     def prune_lessons(self) -> None:
         cutoff = datetime.now(timezone.utc) - timedelta(days=45)

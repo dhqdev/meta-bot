@@ -9,6 +9,7 @@ from typing import Iterable
 import numpy as np
 
 from app.core.backtest import BTTrade
+from app.core.horizons import horizon_of
 
 RANK_LABELS = {
     "win_rate": "taxa de acerto (conservadora)",
@@ -60,6 +61,8 @@ EMPTY = {
     "max_dd_pct": 0.0,
     "sharpe": 0.0,
     "avg_bars": 0.0,
+    "avg_minutes": None,
+    "horizon": None,
     "max_consec_losses": 0,
     "best_r": 0.0,
     "worst_r": 0.0,
@@ -91,6 +94,7 @@ def compute_metrics(trades: list[BTTrade], risk_pct: float = 1.0, span_seconds: 
     longs = [tr for tr in trades if tr.direction > 0]
     shorts = [tr for tr in trades if tr.direction < 0]
     months = (span_seconds / (30 * 86400)) if span_seconds else 0
+    avg_minutes = float(np.mean([(tr.exit_time - tr.entry_time) / 60 for tr in trades]))
     return {
         "trades": n,
         "wins": wins,
@@ -104,6 +108,8 @@ def compute_metrics(trades: list[BTTrade], risk_pct: float = 1.0, span_seconds: 
         "max_dd_pct": round(float(dd.max() * 100.0), 2),
         "sharpe": round(float(rs.mean() / std * math.sqrt(n)) if std > 0 else 0.0, 3),
         "avg_bars": round(float(np.mean([tr.bars_held for tr in trades])), 1),
+        "avg_minutes": round(avg_minutes, 1),
+        "horizon": horizon_of(avg_minutes),
         "max_consec_losses": _max_consecutive(r <= 0 for r in rs),
         "best_r": round(float(rs.max()), 3),
         "worst_r": round(float(rs.min()), 3),

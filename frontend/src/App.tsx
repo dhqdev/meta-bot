@@ -5,8 +5,8 @@ import { Loading } from "./components/ui";
 import { useAuth } from "./lib/auth";
 import { startLive, stopLive } from "./lib/live";
 import { AgentsPage } from "./pages/Agents";
+import { DailyPage } from "./pages/Daily";
 import { LoginPage } from "./pages/Login";
-import { MarketPage } from "./pages/Market";
 import { OfficePage } from "./pages/Office";
 import { SettingsPage } from "./pages/Settings";
 import { StrategiesPage } from "./pages/Strategies";
@@ -18,8 +18,8 @@ const router = createBrowserRouter([
     children: [
       { path: "/", element: <OfficePage /> },
       { path: "/agentes", element: <AgentsPage /> },
+      { path: "/daily", element: <DailyPage /> },
       { path: "/estrategias", element: <StrategiesPage /> },
-      { path: "/mercado", element: <MarketPage /> },
       { path: "/operacoes", element: <TradesPage /> },
       { path: "/config", element: <SettingsPage /> },
       { path: "*", element: <OfficePage /> },

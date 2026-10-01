@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from app.core.backtest import BTTrade, CostModel, RiskParams, run_backtest, split_trades
 from app.core.bars import Bars
+from app.core.horizons import LONG_TP_R, SCALP_RISK
 from app.core.metrics import ApprovalRules, approve, compute_metrics, hour_stats, objective, score
 from app.core.strategies import FILTERS, Strategy, apply_filters
 
@@ -78,6 +79,9 @@ def _fmt(v) -> str:
     return str(v).replace(".", ",") if isinstance(v, float) else str(v)
 
 
+HORIZON_LABELS = ("modo scalper: stop 1 ATR, alvo 1R e saída em até 6 candles", "segurar mais: alvo 3R e mais tempo em posição")
+
+
 def variants(strategy: Strategy, base: Candidate, rng: random.Random, best_hours: list[int] | None = None, n_random: int = 8) -> list[Candidate]:
     """Mutações que o Estrategista testa: um parâmetro por vez, sorteios, filtros e risco."""
     out: list[Candidate] = []
@@ -116,6 +120,10 @@ def variants(strategy: Strategy, base: Candidate, rng: random.Random, best_hours
     for new_tp in (1.0, 1.5, 2.0, 3.0):
         if abs(new_tp - tp) > 1e-9:
             out.append(Candidate(dict(params), dict(base.filters), {**risk, "tp_r": new_tp}, f"alvo {_fmt(tp)}R → {_fmt(new_tp)}R"))
+    # Horizonte: sempre testa a versão scalper e a versão que segura mais a posição.
+    base_bars = int(risk.get("max_bars") or 0)
+    out.append(Candidate(dict(params), dict(base.filters), {**risk, **SCALP_RISK}, HORIZON_LABELS[0]))
+    out.append(Candidate(dict(params), dict(base.filters), {**risk, "tp_r": LONG_TP_R, "max_bars": max(base_bars * 2, 60) if base_bars else 0}, HORIZON_LABELS[1]))
     # sem duplicatas
     seen = {base.key()}
     unique = []
@@ -151,6 +159,8 @@ def evolve(
     base_eval = evaluate(bars, strategy, base, costs, rules, rank_by)
     cands = variants(strategy, base, rng, best_hours)
     rng.shuffle(cands)
+    # as variantes de horizonte (scalper x segurar mais) entram sempre na rodada
+    cands = [c for c in cands if c.label in HORIZON_LABELS] + [c for c in cands if c.label not in HORIZON_LABELS]
     cands = cands[:budget]
     min_is = max(5, int(rules.min_trades * (1 - rules.oos_fraction) * 0.6))
     evals = []

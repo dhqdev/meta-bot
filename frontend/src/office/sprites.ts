@@ -206,8 +206,25 @@ export function characterSprite(id: string, dir: Dir, frame: number, pose: Pose)
     drawHead(px, look, faceDir, bob);
     drawBody(px, look, faceDir, frame, pose, bob);
   }
+  outline(ctx, 16, 24);
   cache.set(key, canvas);
   return canvas;
+}
+
+/** Contorno escuro de 1 px em volta do personagem: fica nítido em qualquer fundo. */
+function outline(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const img = ctx.getImageData(0, 0, w, h);
+  const a = img.data;
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && a[(y * w + x) * 4 + 3] > 40;
+  const edge: number[] = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (solid(x, y)) continue;
+      if (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1)) edge.push(x, y);
+    }
+  }
+  ctx.fillStyle = "rgba(16,18,28,0.9)";
+  for (let i = 0; i < edge.length; i += 2) ctx.fillRect(edge[i], edge[i + 1], 1, 1);
 }
 
 /** Retrato quadrado (rosto e ombros) para cartões e listas. */

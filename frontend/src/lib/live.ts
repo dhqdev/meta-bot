@@ -11,18 +11,38 @@ export interface ActivityItem {
   text: string;
 }
 
+export interface TeamMessage {
+  id?: number | null;
+  ts: string;
+  sender: string;
+  recipient: string;
+  kind: string;
+  text: string;
+  data?: Record<string, any>;
+}
+
+export interface Persona {
+  title: string;
+  bio: string;
+  traits: string[];
+  voice: string;
+  catchphrases: string[];
+}
+
 export interface LiveState {
   connected: boolean;
-  agents: Record<string, AgentView & { uses_ai?: boolean; emoji?: string; description?: string }>;
-  system: { running?: boolean; mode?: string; data_source?: string; ai?: boolean; ai_provider?: string | null; mt5?: Record<string, any> };
+  agents: Record<string, AgentView & { uses_ai?: boolean; emoji?: string; description?: string; persona?: Persona }>;
+  system: { running?: boolean; mode?: string; data_source?: string; ai?: boolean; mt5?: Record<string, any> };
   office: Record<string, any>;
   activity: ActivityItem[];
+  messages: TeamMessage[];
+  lastDaily?: { day: string; summary: string; pnl: number; mood: string };
 }
 
 type Listener = () => void;
 type EventListener = (ev: Record<string, any>) => void;
 
-let state: LiveState = { connected: false, agents: {}, system: {}, office: {}, activity: [] };
+let state: LiveState = { connected: false, agents: {}, system: {}, office: {}, activity: [], messages: [] };
 const listeners = new Set<Listener>();
 const eventListeners = new Set<EventListener>();
 let ws: WebSocket | null = null;
@@ -39,7 +59,7 @@ function onMessage(ev: Record<string, any>) {
     case "snapshot": {
       const agents: LiveState["agents"] = {};
       for (const a of ev.agents || []) agents[a.id] = a;
-      set({ agents, system: ev.system || {}, office: ev.office || {}, activity: (ev.activity || []).slice(-200) });
+      set({ agents, system: ev.system || {}, office: ev.office || {}, activity: (ev.activity || []).slice(-200), messages: (ev.messages || []).slice(-200) });
       break;
     }
     case "agent":
@@ -47,6 +67,12 @@ function onMessage(ev: Record<string, any>) {
       break;
     case "activity":
       set({ activity: [...state.activity.slice(-199), ev as ActivityItem] });
+      break;
+    case "message":
+      set({ messages: [...state.messages.slice(-199), ev as TeamMessage] });
+      break;
+    case "daily":
+      set({ lastDaily: { day: ev.day, summary: ev.summary, pnl: ev.pnl, mood: ev.mood } });
       break;
     case "office":
       set({ office: { ...state.office, ...(ev.data || {}) } });

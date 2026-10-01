@@ -72,6 +72,22 @@ server {
         return 302 /;
     }
 
+    # PWA: o service worker e o manifesto nunca ficam presos em cache (atualizações chegam na hora)
+    location = /sw.js {
+        include /etc/nginx/snippets/headers.conf;
+        add_header Cache-Control "no-cache" always;
+        add_header Service-Worker-Allowed "/" always;
+        try_files $uri =404;
+    }
+
+    location = /manifest.webmanifest {
+        include /etc/nginx/snippets/headers.conf;
+        add_header Cache-Control "no-cache" always;
+        default_type application/manifest+json;
+        types { }
+        try_files $uri =404;
+    }
+
     location /assets/ {
         include /etc/nginx/snippets/headers.conf;
         add_header Cache-Control "public, max-age=31536000, immutable" always;

@@ -15,12 +15,15 @@ from __future__ import annotations
 import math
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.agents.base import Agent, AgentProfile
+from app.agents.personas import persona_prompt
 from app.agents.skills import SkillDef, active_lessons, playbook
+from app.config import get_settings
 from app.db import session_scope
 from app.kv import kv_get, kv_set
 from app.models import Decision, Trade
@@ -28,6 +31,7 @@ from app.runtime import get_config
 from app.services.llm import to_json
 
 DEFAULT_WEIGHTS = {"strategy": 0.45, "hour": 0.2, "news": 0.15, "live": 0.2}
+DEFAULT_HORIZON_WEIGHTS = {"scalp": 1.0, "day": 1.0, "swing": 1.0}
 
 
 class AIPick(BaseModel):
@@ -44,6 +48,10 @@ class AIPlan(BaseModel):
 
 def _sigmoid(x: float) -> float:
     return 1 / (1 + math.exp(-x))
+
+
+def _local_day() -> str:
+    return datetime.now(ZoneInfo(get_settings().timezone)).date().isoformat()
 
 
 class ManagerAgent(Agent):
@@ -72,9 +80,16 @@ class ManagerAgent(Agent):
         self.rationale = ""
         # Economia: o plano da IA é reaproveitado enquanto os candidatos não mudarem.
         self._ai_cache: dict | None = None
+        self._ended_day: str | None = None
 
     async def tick(self) -> None:
         cfg = get_config()
+        stopped = self.office.agent("risk").day_stopped()
+        if stopped:
+            if self._ended_day != _local_day():
+                self.end_day(stopped)
+            return
+        self.morning_focus()
         if self.due("decide", cfg.decision_interval_minutes * 60):
             await self.decide()
         if self.plan and time.time() > self.plan_expires:
@@ -92,10 +107,60 @@ class ManagerAgent(Agent):
         total = sum(w.values()) or 1.0
         return {k: v / total for k, v in w.items()}
 
+    def morning_focus(self) -> None:
+        """Primeira coisa do dia: lembra a equipe do foco combinado na daily de ontem."""
+        today = _local_day()
+        if kv_get("daily.focus_told") == today:
+            return
+        kv_set("daily.focus_told", today)
+        report = self.office.daily.last_report(before=today)
+        if report and report.get("focus"):
+            self.tell("all", "☀️ " + self.line("focus", focus="; ".join(report["focus"][:3])), kind="daily", data={"day": report["day"]})
+
+    def horizon_weights(self) -> dict[str, float]:
+        stored = kv_get("manager.horizon_weights") or {}
+        return {k: float(stored.get(k, v)) for k, v in DEFAULT_HORIZON_WEIGHTS.items()}
+
+    def learn_horizons(self, summary: dict) -> list[str]:
+        """Scalper x day trade x posição longa: ajusta a preferência com o backtest e o resultado real.
+
+        Peso entre 0,75 e 1,25, mudando no máximo 30% do caminho por dia (aprende devagar)."""
+        old = self.horizon_weights()
+        new: dict[str, float] = {}
+        notes = []
+        for row in summary.get("horizons", []):
+            h = row["key"]
+            bt = max(-1.0, min(1.0, float(row.get("bt_oos_expectancy_r") or 0.0) * 4))
+            n = int(row.get("live_trades") or 0)
+            live = max(-1.0, min(1.0, float(row.get("live_r") or 0.0) / n * 2)) if n >= 3 else 0.0
+            has_bt = bool(row.get("approved"))
+            target = 1.0 + 0.25 * ((0.6 * bt if has_bt else 0.0) + 0.4 * live)
+            value = round(min(1.25, max(0.75, 0.7 * old.get(h, 1.0) + 0.3 * target)), 3)
+            new[h] = value
+            if abs(value - old.get(h, 1.0)) >= 0.01:
+                notes.append(f"{row.get('label', h)}: peso {old.get(h, 1.0):.2f} → {value:.2f}".replace(".", ","))
+        kv_set("manager.horizon_weights", new)
+        self.skills.update("leitura_contexto", params={"horizon_weights": new})
+        return notes
+
     def active_plan(self) -> list[dict]:
         if not self.plan or time.time() > self.plan_expires:
             return []
+        if self.office.agent("risk").day_stopped():
+            return []
         return self.plan
+
+    def end_day(self, kind: str) -> None:
+        """A Rita encerrou o dia (meta ou limite): plano vazio até amanhã."""
+        self._ended_day = _local_day()
+        self.plan = []
+        self.plan_expires = 0.0
+        self._ai_cache = None
+        target = kind == "target"
+        self.rationale = "Dia encerrado: meta de ganho batida." if target else "Dia encerrado: limite de perda atingido."
+        self.office.publish_office(plan=[], plan_rationale=self.rationale)
+        self.tell("all", self.line("day_stop_target" if target else "day_stop_loss"), kind="comemoracao" if target else "alerta")
+        self.set_state("idle", "manager", "Dia encerrado com a meta batida 🎯" if target else "Dia encerrado no limite de perda", "🎯" if target else "🛑")
 
     # --------------------------------------------------------- candidatos
     def build_candidates(self) -> list[dict]:
@@ -104,6 +169,19 @@ class ManagerAgent(Agent):
         news = self.office.agent("news")
         schedule = self.office.agent("schedule")
         w = self.weights()
+        hw = self.horizon_weights()
+        avoid = kv_get("team.avoid_hours") or {}
+        hour_now = datetime.now(timezone.utc).hour
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        def avoided(symbol: str) -> bool:
+            """Hora que a daily mandou evitar (no ativo ou em todos: chave "*"), válida até amanhã à noite."""
+            for key in (symbol, "*"):
+                entry = avoid.get(key) or {}
+                if hour_now in entry.get("hours_utc", []) and entry.get("until", "") >= now_iso:
+                    return True
+            return False
+
         cands = []
         for prof in strategist.ranking(only_approved=True, limit=300):
             if prof["symbol"] not in cfg.watchlist or prof["timeframe"] not in cfg.timeframes:
@@ -118,7 +196,11 @@ class ManagerAgent(Agent):
             news_s = 1.0 - 0.5 * news_strength
             strat_s = float(prof["score"])
             total = w["strategy"] * strat_s + w["hour"] * hour_q + w["news"] * news_s + w["live"] * live_s
+            horizon = prof.get("horizon") or "day"
+            total *= hw.get(horizon, 1.0)
             blocked = []
+            if avoided(prof["symbol"]):
+                blocked.append(f"hora evitada pela daily ({hour_now}h UTC)")
             if blackout:
                 blocked.append(f"evento {blackout['title']} ({blackout['currency']})")
             if hour_q < cfg.min_hour_quality:
@@ -136,6 +218,8 @@ class ManagerAgent(Agent):
                     "timeframe": prof["timeframe"],
                     "strategy": prof["strategy"],
                     "strategy_name": prof["strategy_name"],
+                    "horizon": horizon,
+                    "avg_minutes": prof.get("avg_minutes"),
                     "score": round(total, 3),
                     "votes": {"strategy": round(strat_s, 3), "hour": round(hour_q, 3), "news": round(news_s, 3), "live": round(live_s, 3)},
                     "suggested_direction": direction,
@@ -181,6 +265,7 @@ class ManagerAgent(Agent):
             "reason": reason[:240],
             "votes": c["votes"],
             "score": c["score"],
+            "horizon": c.get("horizon", "day"),
         }
 
     async def ai_plan(self, cands: list[dict]) -> tuple[list[dict] | None, str, str]:
@@ -188,7 +273,14 @@ class ManagerAgent(Agent):
         risk = self.office.agent("risk").status()
         schedule = self.office.agent("schedule")
         lessons = "\n".join(f"- ({l['agent']}) {l['text']}" for l in active_lessons("manager", 10)) or "- (nenhuma ainda)"
-        system = playbook("manager") + "\n\n## Lições registradas pela Auditora\n" + lessons
+        system = (
+            playbook("manager")
+            + "\n\n" + playbook("equipe")
+            + "\n\n## Sua personalidade\n" + persona_prompt(["manager"])
+            + "\n\n## Lições registradas pela Auditora\n" + lessons
+        )
+        last_daily = self.office.daily.last_report(before=_local_day())
+        focus = "; ".join((last_daily or {}).get("focus", [])[:3]) or "nenhum"
         top = cands[:15]
         user = (
             f"Agora (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}. "
@@ -196,6 +288,7 @@ class ManagerAgent(Agent):
             f"Sessões abertas: {', '.join(self.office.office_info.get('sessions') or []) or 'nenhuma'}.\n"
             f"Eventos de alto impacto nas próximas 6 h: {to_json(schedule.upcoming(6, ['High']))}\n"
             f"Risco: {to_json(risk)}\n"
+            f"Foco combinado na daily de ontem: {focus}.\n"
             f"Candidatos (já filtrados pela Estrategista; 'blocked' não pode ser escolhido):\n{to_json(top)}"
         )
         res = await self.office.llm.complete_json(
@@ -301,6 +394,8 @@ class ManagerAgent(Agent):
         summary = ", ".join(f"{p['symbol']} {p['timeframe']} {p['strategy_name']}" + ("" if p["direction"] == "both" else f" (só {'compra' if p['direction'] == 'long' else 'venda'})") for p in plan) or "ficar de fora"
         if changed:
             self.log(f"Novo plano{' (IA)' if ai_used else ''}: {summary}. {rationale}", kind="decision")
+            short = ", ".join(f"{p['symbol']} {p['timeframe']}" for p in plan)
+            self.tell("all", "📋 " + (self.line("plan_new", summary=short) if plan else self.line("plan_empty")), kind="info", data={"plan": [p["profile_id"] for p in plan]})
         self.idle("Acompanhando o plano")
 
     def meeting(self, cands: list[dict], plan: list[dict], rationale: str) -> None:

@@ -113,6 +113,45 @@ class Activity(Base):
     data: Mapped[Any] = mapped_column(JSON, default=dict)
 
 
+class AgentMessage(Base):
+    """Conversa da equipe: mensagens de um agente para outro (ou para todos)."""
+
+    __tablename__ = "agent_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ts: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow, index=True)
+    sender: Mapped[str] = mapped_column(String(30), index=True)
+    recipient: Mapped[str] = mapped_column(String(30), default="all", index=True)
+    kind: Mapped[str] = mapped_column(String(20), default="info")
+    text: Mapped[str] = mapped_column(Text)
+    data: Mapped[Any] = mapped_column(JSON, default=dict)
+
+
+class DailyReport(Base):
+    """Relatório da daily (reunião de fim de dia): o que aconteceu, o que aprenderam e o que muda amanhã."""
+
+    __tablename__ = "daily_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), unique=True, index=True)  # AAAA-MM-DD (horário local)
+    ts: Mapped[datetime] = mapped_column(TZDateTime(), default=utcnow)
+    mode: Mapped[str] = mapped_column(String(10), default="paper")
+    pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    trades: Mapped[int] = mapped_column(Integer, default=0)
+    wins: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="normal")  # normal | meta | limite
+    mood: Mapped[str] = mapped_column(String(20), default="neutro")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    transcript: Mapped[Any] = mapped_column(JSON, default=list)
+    sections: Mapped[Any] = mapped_column(JSON, default=list)
+    adjustments: Mapped[Any] = mapped_column(JSON, default=list)
+    lessons: Mapped[Any] = mapped_column(JSON, default=list)
+    focus: Mapped[Any] = mapped_column(JSON, default=list)
+    metrics: Mapped[Any] = mapped_column(JSON, default=dict)
+    ai: Mapped[bool] = mapped_column(Boolean, default=False)
+    model: Mapped[str] = mapped_column(String(80), default="")
+
+
 class AIUsage(Base):
     __tablename__ = "ai_usage"
 

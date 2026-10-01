@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { AGENT_COLORS, Avatar, Badge, Bar, Button, Card, Empty, Loading, Modal } from "../components/ui";
+import { AGENT_COLORS, AGENT_NAMES, Avatar, Badge, Bar, Button, Card, Empty, Loading, Modal } from "../components/ui";
 import { api } from "../lib/api";
 import { ago, dateTime } from "../lib/format";
 
@@ -35,7 +35,7 @@ export function AgentsPage() {
       <div>
         <h1 className="font-pixel text-sm text-gold">A EQUIPE</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Cada agente tem skills que sobem de nível com trabalho e resultado real: backtests aprovados, evoluções confirmadas fora da amostra, notícias que acertaram a direção do preço, operações bem geridas. Os que usam IA (Claude direto ou modelos do OpenRouter) recebem no prompt o playbook da função e as lições registradas pela Auditora.
+          Cada agente tem uma personalidade e skills que sobem de nível com trabalho e resultado real: backtests aprovados, evoluções confirmadas fora da amostra, notícias que acertaram a direção do preço, operações bem geridas e o que aprenderam na daily. Os que usam IA (modelos fixos do OpenRouter) recebem no prompt o manual da equipe, o playbook da função, a personalidade e as lições em vigor.
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
@@ -54,10 +54,26 @@ export function AgentsPage() {
                     {a.uses_ai ? <Badge tone="green">IA</Badge> : <Badge>sem IA</Badge>}
                     <Badge tone="gold">nível médio {a.level}</Badge>
                   </div>
-                  <p className="mt-2 text-xs text-slate-300">{a.task}</p>
+                  {a.persona?.title && <p className="mt-1 text-xs italic text-slate-300">{a.persona.title}</p>}
                 </div>
               </div>
+              <p className="mt-3 rounded-lg bg-panel2 px-2.5 py-1.5 text-xs text-slate-200">
+                {a.status_emoji} {a.task}
+              </p>
               <p className="mt-3 text-xs leading-relaxed text-muted">{a.description}</p>
+              {a.persona && (
+                <div className="mt-3 rounded-lg border border-line/70 p-2.5">
+                  <p className="text-xs leading-relaxed text-slate-300">{a.persona.bio}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {a.persona.traits.map((t: string) => (
+                      <Badge key={t} tone="purple">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                  {a.persona.catchphrases?.[0] && <p className="mt-2 text-[11px] italic text-muted">“{a.persona.catchphrases[0]}”</p>}
+                </div>
+              )}
               <div className="mt-3 space-y-2">
                 {top.map((s: any) => (
                   <div key={s.key}>
@@ -94,7 +110,7 @@ export function AgentsPage() {
         })}
       </div>
       <Card title="Lições que a equipe segue">
-        {!lessons.data?.length && <Empty>A Auditora registra lições quando encontra padrões nas operações reais (ex.: horário com perdas seguidas, estratégia abaixo do backtest).</Empty>}
+        {!lessons.data?.length && <Empty>As lições nascem na daily e nas revisões da Aurora quando aparecem padrões nas operações reais (ex.: horário com perdas seguidas, estratégia abaixo do backtest).</Empty>}
         <div className="divide-y divide-line">
           {lessons.data?.map((l) => (
             <div key={l.id} className="flex items-start gap-3 py-2 text-sm">
@@ -102,7 +118,8 @@ export function AgentsPage() {
               <div className="flex-1">
                 <p>{l.text}</p>
                 <p className="text-[11px] text-muted">
-                  para {l.agent} · {ago(l.ts)} · peso {l.score}
+                  para {AGENT_NAMES[l.agent] ?? (l.agent === "all" ? "toda a equipe" : l.agent)} · {l.source === "daily" ? "da daily · " : ""}
+                  {ago(l.ts)} · peso {l.score}
                 </p>
               </div>
               <button

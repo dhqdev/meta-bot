@@ -132,7 +132,7 @@ def active_lessons(agent: str | None = None, limit: int = 12) -> list[dict]:
         if agent:
             q = q.where(Lesson.agent.in_([agent, "all"]))
         rows = list(s.scalars(q.order_by(Lesson.score.desc(), Lesson.ts.desc()).limit(limit)))
-        return [{"id": r.id, "agent": r.agent, "text": r.text, "score": r.score, "ts": r.ts.isoformat()} for r in rows]
+        return [{"id": r.id, "agent": r.agent, "text": r.text, "score": r.score, "source": r.source, "ts": r.ts.isoformat()} for r in rows]
 
 
 def add_lesson(agent: str, text: str, evidence: dict | None = None, source: str = "auditor", score: float = 1.0) -> None:

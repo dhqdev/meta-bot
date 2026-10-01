@@ -25,3 +25,12 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </StrictMode>,
 );
+
+// PWA: instala o service worker só no build de produção (no modo dev ele atrapalharia o recarregamento)
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* sem service worker o app funciona igual, só não abre offline */
+    });
+  });
+}

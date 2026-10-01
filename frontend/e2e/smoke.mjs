@@ -47,8 +47,8 @@ try {
 
   const pages = [
     ["/agentes", "A EQUIPE"],
+    ["/daily", "DAILY"],
     ["/estrategias", "ESTRATÉGIAS"],
-    ["/mercado", "MERCADO"],
     ["/operacoes", "OPERAÇÕES"],
     ["/config", "CONFIGURAÇÕES"],
   ];
@@ -64,14 +64,47 @@ try {
     await page.screenshot({ path: `${OUT}${path.slice(1)}.png` });
   }
 
-  // Configurações: a tela de IA mostra os modelos econômicos do OpenRouter
-  const aiOk = await page.getByText("Modelo de cada agente").isVisible();
-  check(aiOk, "configurações de IA (OpenRouter/Anthropic) visíveis");
+  // Configurações: metas do dia no topo e a IA só com os modelos fixos do OpenRouter
+  check(await page.getByText("Modelo de cada agente").isVisible(), "configurações de IA (OpenRouter, modelos fixos) visíveis");
+  check(await page.getByText("Limite de perda do dia").first().isVisible(), "metas do dia nas configurações");
+  check((await page.locator('input[placeholder^="sk-ant"]').count()) === 0, "sem opção de chave da Anthropic");
 
-  // WebSocket conectado (sem o aviso "reconectando…")
+  // Daily: botão para fazer a reunião agora e relatório gerado
+  await page.click('header a[href="/daily"]');
+  await page.getByRole("button", { name: /Fazer a daily agora/ }).click();
+  const dailyOk = await page
+    .getByText("Ajustes para amanhã")
+    .first()
+    .waitFor({ timeout: 30000 })
+    .then(() => true)
+    .catch(() => false);
+  check(dailyOk, "daily feita na hora, com relatório");
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: `${OUT}daily-report.png`, fullPage: true });
+
+  // WebSocket conectado (sem o aviso "reconectando…") e a conversa da equipe no escritório
   await page.click('header a[href="/"]');
   await page.waitForTimeout(2000);
   check(!(await page.getByText("reconectando…").first().isVisible().catch(() => false)), "WebSocket conectado");
+  check(await page.getByRole("button", { name: "Conversa", exact: true }).isVisible(), "aba Conversa no escritório");
+  const daily = await page.getByText("hora da daily").first().isVisible().catch(() => false);
+  check(daily, "mensagens da equipe na conversa");
+
+  // PWA: manifesto e service worker publicados
+  const manifest = await fetch(`${BASE}/manifest.webmanifest`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  check(!!manifest && manifest.icons?.length >= 3 && manifest.display === "standalone", "manifesto do app (PWA)");
+  const sw = await fetch(`${BASE}/sw.js`);
+  check(sw.ok, "service worker publicado");
+
+  // Celular: barra de navegação embaixo e nada vazando para os lados
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const path of ["/", "/daily", "/config"]) {
+    await page.click(`nav a[href="${path}"] >> visible=true`);
+    await page.waitForTimeout(1200);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    check(overflow <= 1, `celular sem rolagem lateral em ${path} (${overflow}px)`);
+    await page.screenshot({ path: `${OUT}mobile${path === "/" ? "-office" : path.replace("/", "-")}.png` });
+  }
 
   // API protegida: sem cookie, 401
   const anon = await fetch(`${BASE}/api/system`);

@@ -261,7 +261,8 @@ class NewsAgent(Agent):
         self.skills.gain("leitura_manchetes", len(by_id), f"{len(by_id)} manchetes classificadas pela IA")
         if alerts:
             self.skills.gain("alerta_eventos", 3 * len(alerts), "notícias de alto impacto identificadas")
-            self.say(f"⚠️ Alto impacto: {alerts[0][:110]}", "⚠️")
+            self.tell("manager", "⚠️ " + self.line("strong", title=alerts[0][:100], impact="alto"), kind="alerta")
+            self.office.agent("manager").tell("news", self.office.agent("manager").line("ack_news"), kind="resposta")
             self.log(f"Notícia de alto impacto: {alerts[0]}", kind="news", level="warning")
         self._scores_at = 0
         self.idle("Acompanhando as notícias")

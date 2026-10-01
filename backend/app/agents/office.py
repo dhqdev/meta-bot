@@ -10,6 +10,7 @@ import uuid
 from app.agents.auditor import AuditorAgent
 from app.agents.base import Agent
 from app.agents.cashier import CashierAgent
+from app.agents.daily import DAILY_SKILL, DailyMeeting
 from app.agents.infra import InfraAgent
 from app.agents.manager import ManagerAgent
 from app.agents.news import NewsAgent
@@ -43,6 +44,7 @@ class Office:
         for cls in AGENT_CLASSES:
             agent = cls(self)
             self.agents[agent.id] = agent
+        self.daily = DailyMeeting(self)
         self.tasks: list[asyncio.Task] = []
         self.office_info: dict = {}
         self._exit_cache: tuple[float, dict] | None = None
@@ -52,14 +54,27 @@ class Office:
     def ensure_setup(self) -> None:
         self.terminals.ensure_default()
         for agent in self.agents.values():
-            agent.skills.ensure(agent.skill_defs)
+            agent.skills.ensure([*agent.skill_defs, DAILY_SKILL])
 
     async def start(self) -> None:
         bus.bind_loop(asyncio.get_running_loop())
         self.ensure_setup()
         for agent in self.agents.values():
             self.tasks.append(asyncio.create_task(agent.run_forever(), name=f"agent-{agent.id}"))
+        self.tasks.append(asyncio.create_task(self.daily_loop(), name="daily"))
         log.info("escritório aberto com %d agentes", len(self.agents))
+
+    async def daily_loop(self) -> None:
+        """Confere a cada 30 s se chegou a hora da daily."""
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if self.daily.due():
+                    await self.daily.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("falha na daily")
 
     async def stop(self) -> None:
         for task in self.tasks:
@@ -97,7 +112,6 @@ class Office:
                 "mode": cfg.mode,
                 "data_source": self.market.source(),
                 "ai": self.llm.available(),
-                "ai_provider": self.llm.provider() if self.llm.available() else None,
                 "mt5": getattr(infra, "status", {}),
             },
             "office": self.office_info,
@@ -140,20 +154,21 @@ class Office:
                 "strategy": sig.strategy, "timeframe": sig.timeframe,
             }
         ok, reason, risk_mult = manager.review_signal(data["symbol"], data["profile_id"], data["direction"])
+        side = "compra" if data["direction"] == "buy" else "venda"
         if not ok:
             self._reject(signal_id, "gerente", reason)
-            manager.say(f"✋ Sinal em {data['symbol']} recusado: {reason[:60]}", "✋", to="strategist")
+            manager.tell("strategist", "✋ " + manager.line("veto", symbol=data["symbol"], reason=reason[:80]), kind="resposta")
             return None
         manager.work(f"Aprovado: {data['symbol']}. Rita, calcula o risco?", "agent:risk", "✅")
-        manager.say(f"✅ Aprovado! Rita, calcula o lote de {data['symbol']}?", "✅", to="risk")
+        manager.tell("risk", "✅ " + manager.line("approve", symbol=data["symbol"], side=side), kind="pedido")
         verdict = await risk.evaluate(data["symbol"], data["direction"], data["entry"], data["sl"], risk_mult)
         manager.idle("Acompanhando o plano")
         if not verdict.ok:
             self._reject(signal_id, "risco", verdict.reason)
-            risk.say(f"❌ Vetado: {verdict.reason[:70]}", "❌")
+            risk.tell("manager", "❌ " + risk.line("veto", reason=verdict.reason[:90]), kind="resposta")
             return None
         risk.work(f"Lote {verdict.volume:g} ({verdict.risk_pct:.2f}% de risco)".replace(".", ","), "agent:cashier", "🛡️")
-        risk.say(f"🛡️ {verdict.volume:g} lote(s) em {data['symbol']}, risco {verdict.risk_money:.2f}".replace(".", ","), "🛡️", to="cashier")
+        risk.tell("cashier", "🛡️ " + risk.line("lot", volume=f"{verdict.volume:g}", symbol=data["symbol"], risk=f"{verdict.risk_money:.2f}".replace(".", ",")), kind="pedido")
         with session_scope() as s:
             sig = s.get(Signal, signal_id)
             if sig is not None:

@@ -1,21 +1,38 @@
 import { useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Bot, Building2, CandlestickChart, LogOut, Power, Receipt, Settings, Sparkles, Users } from "lucide-react";
-import { useState } from "react";
+import { Bot, Building2, ClipboardList, Download, LogOut, Power, Receipt, Settings, Sparkles, Users } from "lucide-react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { signed } from "../lib/format";
 import { patchSystem, useLive } from "../lib/live";
 import { Badge } from "./ui";
 
 const NAV = [
   { to: "/", label: "Escritório", icon: Building2 },
   { to: "/agentes", label: "Agentes", icon: Users },
+  { to: "/daily", label: "Daily", icon: ClipboardList },
   { to: "/estrategias", label: "Estratégias", icon: Sparkles },
-  { to: "/mercado", label: "Mercado", icon: CandlestickChart },
   { to: "/operacoes", label: "Operações", icon: Receipt },
   { to: "/config", label: "Config.", icon: Settings },
 ];
+
+/** Resultado do dia e se a equipe já parou (meta batida ou limite de perda). */
+export function DayGoalChip() {
+  const risk = useLive().office.risk;
+  if (!risk || risk.day_pnl == null) return null;
+  const cur = risk.currency ? ` ${risk.currency}` : "";
+  if (risk.day_stop === "target") return <Badge tone="green">🎯 meta do dia batida · {signed(risk.day_stop_pnl ?? risk.day_pnl)}{cur}</Badge>;
+  if (risk.day_stop === "loss") return <Badge tone="red">⛔ limite do dia · {signed(risk.day_stop_pnl ?? risk.day_pnl)}{cur}</Badge>;
+  const pnl = Number(risk.day_pnl) || 0;
+  return (
+    <Badge tone={pnl > 0 ? "green" : pnl < 0 ? "red" : "slate"}>
+      hoje {signed(pnl)}
+      {cur}
+    </Badge>
+  );
+}
 
 export function StatusChips() {
   const { system, connected } = useLive();
@@ -23,12 +40,12 @@ export function StatusChips() {
   const mt5Tone = mt5.connected ? "green" : mt5.configured ? "red" : "slate";
   const mt5Label = mt5.connected ? `MT5 ${mt5.server || "conectado"}` : mt5.configured ? "MT5 fora do ar" : "MT5 não configurado";
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <Badge tone={system.mode === "live" ? "gold" : "blue"}>{system.mode === "live" ? "CONTA REAL/DEMO MT5" : "SIMULADO"}</Badge>
+    <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto">
+      <Badge tone={system.mode === "live" ? "gold" : "blue"}>{system.mode === "live" ? "CONTA MT5" : "SIMULADO"}</Badge>
+      <DayGoalChip />
       <Badge tone={mt5Tone}>{mt5Label}</Badge>
-      <Badge tone={system.data_source === "mt5" ? "green" : "purple"}>{system.data_source === "mt5" ? "dados do MT5" : "mercado simulado"}</Badge>
       <Badge tone={system.ai ? "green" : "slate"}>
-        <Bot className="h-3 w-3" /> {system.ai ? `IA ${system.ai_provider === "openrouter" ? "OpenRouter" : system.ai_provider === "anthropic" ? "Claude" : "ligada"}` : "sem IA"}
+        <Bot className="h-3 w-3" /> {system.ai ? "IA ligada" : "sem IA"}
       </Badge>
       {!connected && <Badge tone="red">reconectando…</Badge>}
     </div>
@@ -60,7 +77,45 @@ export function PowerButton({ compact }: { compact?: boolean }) {
       title={running ? "Desligar: a equipe para de abrir operações (as abertas continuam protegidas)" : "Ligar o escritório"}
     >
       <Power className="h-4 w-4" />
-      {!compact && (running ? "Escritório aberto" : "Ligar escritório")}
+      {!compact && <span className="hidden sm:inline">{running ? "Escritório aberto" : "Ligar escritório"}</span>}
+    </button>
+  );
+}
+
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: string }>;
+}
+
+/** "Instalar app": aparece quando o navegador permite instalar o PWA. */
+function InstallButton() {
+  const [event, setEvent] = useState<InstallPromptEvent | null>(null);
+  useEffect(() => {
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setEvent(e as InstallPromptEvent);
+    };
+    const onInstalled = () => setEvent(null);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+  if (!event) return null;
+  return (
+    <button
+      onClick={async () => {
+        await event.prompt();
+        await event.userChoice.catch(() => null);
+        setEvent(null);
+      }}
+      className="flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-2 text-xs text-slate-200 hover:bg-panel"
+      title="Instalar o META-BOT como aplicativo"
+    >
+      <Download className="h-4 w-4" />
+      <span className="hidden sm:inline">Instalar app</span>
     </button>
   );
 }
@@ -69,7 +124,7 @@ export function Layout() {
   const { logout, status } = useAuth();
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-30 border-b border-line bg-ink/95 backdrop-blur">
+      <header className="sticky top-0 z-30 border-b border-line bg-ink/95 pt-[env(safe-area-inset-top)] backdrop-blur">
         <div className="mx-auto flex max-w-[1600px] items-center gap-3 px-3 py-2 md:px-5">
           <div className="flex items-center gap-2">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-panel2">
@@ -88,6 +143,7 @@ export function Layout() {
             <div className="hidden 2xl:block">
               <StatusChips />
             </div>
+            <InstallButton />
             <PowerButton />
             <button onClick={() => void logout()} className="rounded-lg p-2 text-muted hover:bg-panel" title={`Sair (${status?.email ?? ""})`}>
               <LogOut className="h-4 w-4" />
@@ -98,14 +154,19 @@ export function Layout() {
           <StatusChips />
         </div>
       </header>
-      <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-24 pt-4 md:px-5 lg:pb-8">
+      <main className="mx-auto w-full max-w-[1600px] flex-1 px-3 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 md:px-5 lg:pb-8">
         <Outlet />
       </main>
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden">
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.to === "/"} className={({ isActive }) => clsx("flex flex-col items-center gap-0.5 py-2 text-[10px]", isActive ? "text-gold" : "text-slate-400")}>
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.to === "/"}
+            className={({ isActive }) => clsx("flex min-w-0 flex-col items-center gap-0.5 py-2 text-[10px] leading-tight", isActive ? "text-gold" : "text-slate-400")}
+          >
             <n.icon className="h-5 w-5" />
-            {n.label}
+            <span className="max-w-full truncate">{n.label}</span>
           </NavLink>
         ))}
       </nav>

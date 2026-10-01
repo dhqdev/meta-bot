@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from app.agents.personas import persona_dict, speak
 from app.agents.skills import SkillBook, SkillDef
+from app.db import session_scope
 from app.events import bus, record_activity
+from app.models import AgentMessage
 from app.runtime import get_config
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -71,6 +76,7 @@ class Agent:
             "status_emoji": self.emoji,
             "last_error": self.last_error,
             "last_tick_at": self.last_tick_at,
+            "persona": persona_dict(self.profile.id),
         }
 
     def set_state(self, state: str, location: str | None = None, task: str | None = None, emoji: str | None = None) -> None:
@@ -86,7 +92,32 @@ class Agent:
             bus.publish({"type": "agent", **self.snapshot()})
 
     def say(self, text: str, emoji: str = "", to: str | None = None) -> None:
-        bus.publish({"type": "say", "agent": self.id, "text": text[:180], "emoji": emoji, "to": to})
+        """Balão no escritório (fala solta, sem destinatário)."""
+        if to:
+            self.tell(to, text)
+            return
+        bus.publish({"type": "say", "agent": self.id, "text": text[:180], "emoji": emoji})
+
+    def tell(self, to: str, text: str, kind: str = "info", data: dict | None = None) -> None:
+        """Mensagem para um colega (ou "all"): fica na conversa da equipe e aparece no escritório."""
+        text = text.strip()[:280]
+        if not text:
+            return
+        ts = datetime.now(timezone.utc)
+        row_id = None
+        try:
+            with session_scope() as s:
+                row = AgentMessage(ts=ts, sender=self.id, recipient=to or "all", kind=kind, text=text, data=data or {})
+                s.add(row)
+                s.flush()
+                row_id = row.id
+        except Exception:  # a conversa nunca derruba um agente
+            log.exception("falha ao gravar mensagem de %s", self.id)
+        bus.publish({"type": "message", "id": row_id, "sender": self.id, "recipient": to or "all", "kind": kind, "text": text, "data": data or {}, "ts": ts.isoformat()})
+
+    def line(self, key: str, **fields) -> str:
+        """Fala no jeito do agente (personalidade)."""
+        return speak(self.id, key, **fields)
 
     def log(self, text: str, kind: str = "info", level: str = "info", data: dict | None = None) -> None:
         record_activity(self.id, text, kind=kind, level=level, data=data)
@@ -148,8 +179,17 @@ class Agent:
     async def on_system_change(self, running: bool) -> None:
         if running:
             self.set_state("idle", "desk", self.idle_task, "☕")
+            await self.greet()
         elif not self.always_on:
             self.set_state("off", "lounge", "Sistema desligado", "💤")
+
+    async def greet(self) -> None:
+        """Chega na mesa e cumprimenta a equipe (cada um no seu tempo, para não falarem juntos)."""
+        await asyncio.sleep(random.uniform(0.5, 6.0))
+        self.say(self.line("start", **self.greet_fields()))
+
+    def greet_fields(self) -> dict:
+        return {}
 
     async def tick(self) -> None:  # pragma: no cover - cada agente implementa
         raise NotImplementedError

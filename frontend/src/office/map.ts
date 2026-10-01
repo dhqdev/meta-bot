@@ -136,7 +136,8 @@ export const LOCATION_SPOTS: Record<string, Spot[]> = {
   coffee: [S(33, 13), S(35, 13), S(29, 13), S(34, 14)],
   lounge: [S(30, 19, "down", "sitdown"), S(31, 19, "down", "sitdown"), S(32, 19, "down", "sitdown"), S(34, 20, "left"), S(36, 17, "left"), S(29, 17, "right"), S(33, 16, "down"), S(24, 19, "left")],
   manager: [S(32, 5), S(33, 5), S(31, 5)],
-  meeting: [S(29, 8, "right"), S(35, 8, "left"), S(29, 9, "right"), S(35, 9, "left"), S(31, 10), S(33, 10)],
+  // 8 lugares: a daily reúne a equipe inteira em volta da mesa
+  meeting: [S(29, 8, "right"), S(35, 8, "left"), S(29, 9, "right"), S(35, 9, "left"), S(31, 10), S(33, 10), S(32, 10), S(30, 7, "down"), S(34, 7, "down")],
 };
 export const MEETING_HOST: Spot = S(32, 7, "down");
 

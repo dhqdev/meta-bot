@@ -28,7 +28,6 @@ services:
       MB_MT5_PANEL_URL: /mt5/
       MB_MT5_BRIDGE_TOKEN: ${MT5_BRIDGE_TOKEN:?defina MT5_BRIDGE_TOKEN no .env}
       MB_OPENROUTER_API_KEY: ${MB_OPENROUTER_API_KEY:-}
-      MB_ANTHROPIC_API_KEY: ${MB_ANTHROPIC_API_KEY:-}
       MB_PUBLIC_URL: ${MB_PUBLIC_URL:-}
       MB_TIMEZONE: America/Sao_Paulo
       TZ: America/Sao_Paulo

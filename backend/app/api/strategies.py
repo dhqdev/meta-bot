@@ -93,6 +93,14 @@ async def backtest(body: BacktestBody, user: User = Depends(current_user), offic
         raise HTTPException(status_code=502, detail=f"Não foi possível obter os dados: {exc}") from exc
 
 
+@router.get("/horizons")
+def horizons(days: int = 30, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    """Scalper x day trade x posição longa: backtests aprovados e resultado real por horizonte."""
+    out = office.agent("strategist").horizon_summary(days=max(1, min(days, 365)))
+    out["weights"] = office.agent("manager").horizon_weights()  # preferência que o Gerente aprendeu nas dailies
+    return out
+
+
 @router.get("/signals")
 def signals(limit: int = Query(50, le=200), user: User = Depends(current_user)) -> list[dict]:
     return recent_signals(limit)

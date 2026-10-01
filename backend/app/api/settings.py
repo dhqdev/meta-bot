@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
@@ -16,42 +16,84 @@ from app.deps import current_user, get_office
 from app.events import record_activity
 from app.kv import secret_get, secret_set
 from app.models import Terminal, User
-from app.runtime import AI_MODELS, AI_PROVIDERS, OPENROUTER_DEFAULTS, TIMEFRAMES, RuntimeConfig, get_config, update_config
+from app.runtime import TIMEFRAMES, RuntimeConfig, get_config, update_config
 from app.security import box, mask
-from app.services.llm import PRICES
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 # Campos que exigem senha (mexem em dinheiro real ou no modo de operação)
 PROTECTED = {"mode", "system_running"}
 
+# Nomes em português para as mensagens de erro (os mesmos da tela de Configurações)
+FIELD_LABELS = {
+    "watchlist": "Ativos", "timeframes": "Tempos gráficos", "enabled_strategies": "Estratégias ligadas",
+    "daily_loss_limit": "Limite de perda do dia", "daily_loss_unit": "Unidade do limite de perda",
+    "daily_profit_target": "Meta de ganho do dia", "daily_profit_unit": "Unidade da meta de ganho",
+    "risk_per_trade_pct": "Risco por operação", "max_drawdown_pct": "Queda máxima desde o pico",
+    "max_open_positions": "Posições abertas ao mesmo tempo", "max_positions_per_symbol": "Posições por ativo",
+    "max_currency_exposure": "Exposição máxima por moeda", "max_spread_multiplier": "Spread máximo",
+    "min_lot_overrisk": "Tolerância do lote mínimo", "rank_by": "Critério do ranking", "min_trades": "Mínimo de operações no teste",
+    "min_profit_factor": "Fator de lucro mínimo", "oos_fraction": "Parte reservada para a prova", "ranking_interval_hours": "Refazer o ranking a cada",
+    "evolution_interval_hours": "Evoluir a cada", "decision_interval_minutes": "Rever o plano a cada",
+    "max_active_setups": "Setups ativos ao mesmo tempo", "min_hour_quality": "Qualidade mínima do horário",
+    "news_block_threshold": "Força da notícia que veta", "break_even_r": "Zero a zero a partir de",
+    "trailing_start_r": "Trailing a partir de", "trailing_atr_mult": "Distância do trailing", "max_bars_in_trade": "Tempo máximo na operação",
+    "b3_close_time": "Fechar day trade da B3 às", "blackout_before_min": "Pausa antes do evento", "blackout_after_min": "Pausa depois do evento",
+    "news_interval_minutes": "Ler notícias a cada", "daily_meeting_time": "Horário da daily", "ai_news_interval_minutes": "Notícias pela IA a cada",
+    "ai_plan_refresh_minutes": "Validade do plano da IA", "ai_max_calls_per_hour": "Máximo de chamadas de IA por hora",
+    "ai_daily_budget_usd": "Orçamento diário de IA", "paper_initial_balance": "Saldo inicial da conta simulada",
+    "paper_commission_per_lot": "Comissão por lote", "paper_slippage_points": "Slippage", "magic_number": "Número mágico",
+    "deviation_points": "Desvio máximo da ordem", "server_utc_offset_hours": "Fuso do servidor do MT5",
+}
+
+
+def _num(value: Any) -> str:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value).replace(".", ",")
+
+
+def friendly_error(exc: ValidationError) -> str:
+    """Primeiro erro de validação em português, com o nome do campo como aparece na tela."""
+    first = exc.errors()[0]
+    loc = [str(p) for p in first.get("loc", []) if p != "__root__"]
+    field = loc[0] if loc else ""
+    ctx = first.get("ctx") or {}
+    kind = first.get("type", "")
+    msg = str(first.get("msg", "")).removeprefix("Value error, ")
+    if kind in ("greater_than_equal", "greater_than"):
+        msg = f"precisa ser no mínimo {_num(ctx.get('ge', ctx.get('gt')))}"
+    elif kind in ("less_than_equal", "less_than"):
+        msg = f"precisa ser no máximo {_num(ctx.get('le', ctx.get('lt')))}"
+    elif kind == "int_from_float":
+        msg = "precisa ser um número inteiro"
+    elif kind in ("float_parsing", "int_parsing", "float_type", "int_type"):
+        msg = "precisa ser um número"
+    elif kind in ("bool_parsing", "bool_type"):
+        msg = "precisa ser ligado ou desligado"
+    elif kind == "literal_error":
+        msg = f"opção inválida ({ctx.get('expected', '')})"
+    label = FIELD_LABELS.get(field, field)
+    return f"{label}: {msg}" if label else msg
+
 
 @router.get("")
 def get_settings_view(user: User = Depends(current_user), office=Depends(get_office)) -> dict:
     cfg = get_config()
+    stored = secret_get("openrouter_api_key")
+    env_key = get_settings().openrouter_api_key
     return {
         "config": cfg.model_dump(mode="json"),
         "defaults": RuntimeConfig().model_dump(mode="json"),
-        "options": {
-            "timeframes": TIMEFRAMES,
-            "ai_models": AI_MODELS,
-            "ai_prices": PRICES,
-            "ai_providers": AI_PROVIDERS,
-            "openrouter_defaults": OPENROUTER_DEFAULTS,
-        },
+        "options": {"timeframes": TIMEFRAMES},
         "ai": {
             **office.llm.status(),
-            "anthropic": _key_view("anthropic_api_key", get_settings().anthropic_api_key),
-            "openrouter": _key_view("openrouter_api_key", get_settings().openrouter_api_key),
+            "key_masked": mask(stored or env_key),
+            "from_env": bool(env_key and not stored),
             "usage": office.llm.usage_summary(),
         },
         "mt5": {"panel_url": get_settings().mt5_panel_url},
     }
-
-
-def _key_view(name: str, env_value: str) -> dict:
-    stored = secret_get(name)
-    return {"key_set": bool(stored or env_value), "key_masked": mask(stored or env_value), "from_env": bool(env_value and not stored)}
 
 
 @router.put("")
@@ -62,64 +104,39 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
     try:
         cfg = update_config(patch)
     except ValidationError as exc:
-        first = exc.errors()[0]
-        field = ".".join(str(p) for p in first.get("loc", []))
-        raise HTTPException(status_code=400, detail=f"{field}: {first.get('msg')}") from exc
+        raise HTTPException(status_code=400, detail=friendly_error(exc)) from exc
     if {"data_source", "server_utc_offset_hours"} & set(patch):
         office.market.clear_cache()
     if {"break_even_r", "trailing_start_r", "trailing_atr_mult", "adaptive_exits"} & set(patch):
         office.invalidate_exit_params()
     if {"watchlist", "timeframes", "enabled_strategies", "rank_by", "min_trades", "min_profit_factor", "oos_fraction"} & set(patch):
         office.agent("strategist").request("ranking")
+    if {"daily_loss_limit", "daily_loss_unit", "daily_profit_target", "daily_profit_unit"} & set(patch):
+        office.agent("risk").request("guard")
     record_activity("system", f"Configurações alteradas: {', '.join(sorted(patch))}", kind="settings")
     return {"config": cfg.model_dump(mode="json")}
 
 
 class AIKeyBody(BaseModel):
     api_key: str | None = Field(None, max_length=300)
-    provider: Literal["anthropic", "openrouter"] = "anthropic"
     password: str
-
-
-PROVIDER_LABEL = {"anthropic": "da Anthropic (Claude)", "openrouter": "do OpenRouter"}
 
 
 @router.post("/ai-key")
 async def set_ai_key(body: AIKeyBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    """Chave do OpenRouter (a única IA do sistema; cada agente já tem o seu modelo)."""
     confirm_password(user, body.password)
     key = (body.api_key or "").strip()
-    name = f"{body.provider}_api_key"
-    label = PROVIDER_LABEL[body.provider]
     if key:
-        ok, message = await office.llm.check_key(key, body.provider)
+        ok, message = await office.llm.check_key(key)
         if not ok:
             raise HTTPException(status_code=400, detail=message)
-        secret_set(name, key)
-        record_activity("system", f"Chave {label} cadastrada", kind="security")
+        secret_set("openrouter_api_key", key)
+        record_activity("system", "Chave do OpenRouter cadastrada", kind="security")
         return {"ok": True, "message": message, "masked": mask(key), "status": office.llm.status()}
-    secret_set(name, None)
-    record_activity("system", f"Chave {label} removida", kind="security")
+    secret_set("openrouter_api_key", None)
+    record_activity("system", "Chave do OpenRouter removida", kind="security")
     return {"ok": True, "message": "chave removida", "status": office.llm.status()}
-
-
-@router.get("/openrouter-models")
-async def openrouter_models(user: User = Depends(current_user), office=Depends(get_office)) -> dict:
-    """Catálogo do OpenRouter com preço por milhão de tokens (para escolher o modelo de cada agente)."""
-    models = await office.llm.openrouter_models()
-    out = []
-    for m in models:
-        out.append(
-            {
-                "id": m["id"],
-                "name": m["name"],
-                "prompt_per_m": round(m["prompt"] * 1_000_000, 4) if m["prompt"] is not None else None,
-                "completion_per_m": round(m["completion"] * 1_000_000, 4) if m["completion"] is not None else None,
-                "context": m["context"],
-                "structured": m["structured"],
-            }
-        )
-    out.sort(key=lambda m: ((m["prompt_per_m"] or 0) + (m["completion_per_m"] or 0), m["id"]))
-    return {"models": out, "defaults": OPENROUTER_DEFAULTS}
 
 
 # ----------------------------------------------------------- terminais MT5

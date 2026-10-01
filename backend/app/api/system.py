@@ -38,7 +38,6 @@ async def system(user: User = Depends(current_user), office=Depends(get_office))
         "data_source": office.market.source(),
         "data_source_setting": cfg.data_source,
         "ai": office.llm.available(),
-        "ai_provider": office.llm.provider() if office.llm.available() else None,
         "mt5": office.agent("infra").status,
         "account": account,
         "risk": office.agent("risk").status(),

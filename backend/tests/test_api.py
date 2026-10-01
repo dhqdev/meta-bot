@@ -134,26 +134,25 @@ def test_websocket_rejects_anonymous(client):
 def test_openrouter_key_via_settings(client, monkeypatch):
     setup_owner(client)
     view = client.get("/api/settings").json()
-    assert view["ai"]["available"] is False and view["ai"]["openrouter"]["key_set"] is False
-    assert view["options"]["openrouter_defaults"]["news"] == "deepseek/deepseek-v4-flash"
+    assert view["ai"]["available"] is False and view["ai"]["key_set"] is False
+    assert view["ai"]["models"]["news"]["model"] == "deepseek/deepseek-v4-flash"
+    assert "ai_provider" not in view["config"] and "openrouter_news_model" not in view["config"]
     office = client.app.state.office
 
-    async def fake_check(key, provider="anthropic"):
+    async def fake_check(key):
         return (key == "sk-or-v1-boa", "chave do OpenRouter válida")
 
     monkeypatch.setattr(office.llm, "check_key", fake_check)
-    r = client.post("/api/settings/ai-key", json={"provider": "openrouter", "api_key": "sk-or-v1-ruim", "password": PASSWORD})
+    r = client.post("/api/settings/ai-key", json={"api_key": "sk-or-v1-ruim", "password": PASSWORD})
     assert r.status_code == 400
-    r = client.post("/api/settings/ai-key", json={"provider": "openrouter", "api_key": "sk-or-v1-boa", "password": PASSWORD})
-    assert r.status_code == 200 and r.json()["status"]["provider"] == "openrouter"
+    r = client.post("/api/settings/ai-key", json={"api_key": "sk-or-v1-boa", "password": PASSWORD})
+    assert r.status_code == 200 and r.json()["status"]["available"] is True
     view = client.get("/api/settings").json()
-    assert view["ai"]["available"] is True and view["ai"]["provider"] == "openrouter"
-    assert view["ai"]["models"]["manager"] == "google/gemini-3.1-flash-lite"
-    assert client.get("/api/system").json()["ai_provider"] == "openrouter"
-    r = client.put("/api/settings", json={"openrouter_news_model": "não é modelo"})
-    assert r.status_code == 400
-    models = client.get("/api/settings/openrouter-models").json()
-    assert models["models"] and models["defaults"]["auditor"] == "anthropic/claude-haiku-4.5"
+    assert view["ai"]["available"] is True and view["ai"]["key_masked"].startswith("sk-o")
+    assert client.get("/api/system").json()["ai"] is True
+    # modelos não mudam pela tela
+    client.put("/api/settings", json={"openrouter_news_model": "openai/gpt-5"})
+    assert client.get("/api/settings").json()["ai"]["models"]["news"]["model"] == "deepseek/deepseek-v4-flash"
 
 
 def test_stack_placeholders_block_startup(monkeypatch):

@@ -116,6 +116,7 @@ class CashierAgent(Agent):
                 "direction": sig.direction, "entry_type": sig.entry_type, "price": sig.price, "trigger": sig.trigger,
                 "sl": sig.sl, "tp": sig.tp, "profile_id": sig.profile_id, "expires_at": sig.expires_at,
                 "volume": volume, "risk_money": risk_money, "risk_pct": risk_pct, "votes": votes,
+                "max_bars": int((sig.context or {}).get("max_bars") or 0),
             }
             if sig.entry_type == "stop":
                 sig.status = "aguardando"
@@ -150,6 +151,9 @@ class CashierAgent(Agent):
         if not self.is_running():
             self._set_signal(info["id"], "cancelado", "sistema desligado")
             return None
+        if self.office.agent("risk").day_stopped():
+            self._set_signal(info["id"], "cancelado", "dia encerrado (meta ou limite do dia)")
+            return None
         mode = cfg.mode
         broker = self.broker_for(mode)
         symbol, side = info["symbol"], info["direction"]
@@ -182,7 +186,7 @@ class CashierAgent(Agent):
             placeholder = Trade(ticket=res.ticket, symbol=symbol, direction=side, volume=info["volume"], entry_price=fill, mode=mode)
             await broker.modify(placeholder, sl, tp)
         risk_money = info["volume"] * dist_sl * value_per_price_unit(spec)
-        ctx = {"votes": info["votes"], "risk_pct": info["risk_pct"]}
+        ctx = {"votes": info["votes"], "risk_pct": info["risk_pct"], "max_bars": info.get("max_bars") or 0}
         with session_scope() as s:
             tr = Trade(
                 mode=mode, terminal_id=(self.office.terminals.active() or {}).get("id") if mode == "live" else None,
@@ -201,7 +205,7 @@ class CashierAgent(Agent):
                 sig.trade_id = trade_id
         verb = "Comprei" if d > 0 else "Vendi"
         bus.publish({"type": "trade", "event": "opened", "trade": data})
-        self.say(f"✅ {verb} {data['volume']:g} {symbol} @ {fill:g} · stop {sl:g}" + (f" · alvo {tp:g}" if tp else ""), "💸")
+        self.say("✅ " + self.line("opened", verb=verb, volume=f"{data['volume']:g}", symbol=symbol, price=f"{fill:g}", sl=f"{sl:g}"), "💸")
         self.log(f"{verb} {data['volume']:g} de {symbol} a {fill:g} ({'simulado' if mode == 'paper' else 'conta MT5'}). Stop {sl:g}, alvo {tp if tp else '—'}. Risco {risk_money:.2f}.", kind="trade")
         self.skills.gain("execucao", 3, f"ordem em {symbol}")
         self.idle("Acompanhando as posições")
@@ -298,7 +302,7 @@ class CashierAgent(Agent):
                 first_be = mg.get("be") and not (tr.mgmt or {}).get("be")
                 last_log = self._last_trail_log.get(tr.id, 0)
                 if first_be:
-                    self.say(f"🔒 Stop no zero a zero em {tr.symbol}", "🔒")
+                    self.say("🔒 " + self.line("be", symbol=tr.symbol), "🔒")
                     self.log(f"Stop de {tr.symbol} movido para o zero a zero ({new_sl:g})", kind="order")
                     self.skills.gain("protecao", 2, "break-even")
                 elif time.time() - last_log > 600:
@@ -307,7 +311,7 @@ class CashierAgent(Agent):
                 bus.publish({"type": "trade", "event": "updated", "trade": {**trade_dict(tr), "sl": new_sl, "mgmt": mg}})
         # saídas por regra de tempo
         now = datetime.now(timezone.utc)
-        max_bars = cfg.max_bars_in_trade or DEFAULT_MAX_BARS.get(tr.timeframe, 60)
+        max_bars = cfg.max_bars_in_trade or int((tr.context or {}).get("max_bars") or 0) or DEFAULT_MAX_BARS.get(tr.timeframe, 60)
         tf_sec = TIMEFRAME_SECONDS.get(tr.timeframe, 3600)
         if tr.timeframe and (now - tr.entry_time).total_seconds() >= max_bars * tf_sec:
             await self._close(tr, "tempo")
@@ -326,6 +330,32 @@ class CashierAgent(Agent):
     def _is_b3(symbol: str) -> bool:
         cfg = get_config()
         return symbol.upper().startswith(tuple(p.upper() for p in cfg.b3_prefixes))
+
+    def cancel_pending(self, reason: str) -> int:
+        """Cancela as ordens stop armadas (ex.: dia encerrado)."""
+        n = 0
+        for sid in list(self._pending):
+            self._pending.pop(sid, None)
+            self._set_signal(sid, "cancelado", reason)
+            n += 1
+        if n:
+            self.log(f"{n} ordem(ns) stop cancelada(s): {reason}", kind="order")
+        return n
+
+    async def close_all(self, reason: str, mode: str | None = None) -> int:
+        """Encerra todas as posições abertas (do modo atual, se não informado)."""
+        mode = mode or get_config().mode
+        with session_scope() as s:
+            ids = list(s.scalars(select(Trade.id).where(Trade.status == "open", Trade.mode == mode)))
+        if not ids:
+            return 0
+        self.tell("risk", self.line("close_all", n=len(ids)), kind="resposta")
+        closed = 0
+        for tid in ids:
+            if await self.request_close(tid, reason):
+                closed += 1
+        self.log(f"Encerrei {closed} de {len(ids)} posição(ões): {reason}", kind="order")
+        return closed
 
     async def request_close(self, trade_id: int, reason: str) -> bool:
         with session_scope() as s:
@@ -390,7 +420,8 @@ class CashierAgent(Agent):
             s.expunge(tr)
         bus.publish({"type": "trade", "event": "closed", "trade": data})
         emoji = "🟢" if data["pnl"] > 0 else "🔴"
-        self.say(f"{emoji} {data['symbol']} fechado ({reason}): {data['pnl']:+.2f} ({data['pnl_r']:+.2f}R)".replace(".", ","), emoji)
+        pnl_txt = f"{data['pnl']:+.2f} ({data['pnl_r']:+.2f}R)".replace(".", ",")
+        self.say(f"{emoji} " + self.line("closed_win" if data["pnl"] > 0 else "closed_loss", symbol=data["symbol"], pnl=pnl_txt), emoji)
         self.log(f"Operação #{trade_id} em {data['symbol']} encerrada por {reason}: {data['pnl']:+.2f} ({data['pnl_r']:+.2f}R)".replace(".", ","), kind="trade")
         if reason in ("be", "trailing") or (reason == "sl" and data["pnl_r"] >= -1.2):
             self.skills.gain("protecao", 3, "perda contida no planejado")
@@ -444,7 +475,7 @@ class CashierAgent(Agent):
             if risk_px <= 0:
                 continue
             target = tr.tp
-            max_bars = cfg.max_bars_in_trade or DEFAULT_MAX_BARS.get(tr.timeframe, 60)
+            max_bars = cfg.max_bars_in_trade or int((tr.context or {}).get("max_bars") or 0) or DEFAULT_MAX_BARS.get(tr.timeframe, 60)
             for be, ts, ta in configs:
                 r, _, _ = simulate_exit(bars, start, d, tr.entry_price, tr.initial_sl, target, RiskParams(break_even_r=be, trailing_start_r=ts, trailing_atr=ta, max_bars=max_bars))
                 results[(be, ts, ta)].append(r)

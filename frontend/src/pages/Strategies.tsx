@@ -46,10 +46,66 @@ export function StrategiesPage() {
           ))}
         </div>
       </div>
-      {tab === "ranking" && <Ranking />}
+      {tab === "ranking" && (
+        <>
+          <HorizonsCard />
+          <Ranking />
+        </>
+      )}
       {tab === "backtest" && <Backtest />}
       {tab === "catalog" && <Catalog />}
     </div>
+  );
+}
+
+const HORIZON_LABEL: Record<string, string> = { scalp: "scalper", day: "day trade", swing: "posição longa" };
+
+/** Scalper x day trade x posição longa: o que o backtest e as operações reais mostram, e a preferência aprendida. */
+function HorizonsCard() {
+  const q = useQuery({ queryKey: ["horizons"], queryFn: () => api.get<any>("/api/strategies/horizons?days=30"), refetchInterval: 60000 });
+  const rows: any[] = q.data?.horizons ?? [];
+  if (!rows.length) return null;
+  const weights: Record<string, number> = q.data?.weights ?? {};
+  return (
+    <Card title="Scalper x day trade x posição longa">
+      <p className="mb-3 text-xs text-muted">
+        Quanto tempo a operação fica aberta faz diferença. A Estela testa cada estratégia nos dois estilos — scalper (alvo curto, sai rápido) e segurando mais tempo (alvo maior) — e o Gustavo passa a preferir o que está dando mais resultado. A preferência é recalibrada todo dia na daily, aos poucos.
+      </p>
+      <div className="grid gap-3 md:grid-cols-3">
+        {rows.map((h) => {
+          const w = weights[h.key] ?? 1;
+          const tone = w > 1.02 ? "green" : w < 0.98 ? "red" : "slate";
+          return (
+            <div key={h.key} className="rounded-lg border border-line bg-panel2 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <b>{h.label}</b>
+                <Badge tone={tone}>
+                  {w > 1.02 ? "preferido" : w < 0.98 ? "menos usado" : "neutro"} · peso {num(w, 2)}
+                </Badge>
+              </div>
+              <div className="text-[11px] text-muted">{h.desc}</div>
+              <div className="mt-2 grid grid-cols-2 gap-y-1 text-xs">
+                <span className="text-muted">aprovadas</span>
+                <span className="text-right tabular-nums">
+                  {h.approved} de {h.profiles}
+                </span>
+                <span className="text-muted">acerto no teste</span>
+                <span className="text-right tabular-nums">{h.approved ? pct(h.bt_win_rate) : "—"}</span>
+                <span className="text-muted">expectativa na prova</span>
+                <span className="text-right tabular-nums">{h.approved ? `${signed(h.bt_oos_expectancy_r)}R` : "—"}</span>
+                <span className="text-muted">real (30 dias)</span>
+                <span className={clsx("text-right tabular-nums", h.live_r > 0 ? "text-up" : h.live_r < 0 ? "text-down" : "")}>{h.live_trades ? `${h.live_trades} op · ${signed(h.live_r)}R` : "—"}</span>
+              </div>
+              {h.best && (
+                <div className="mt-2 truncate text-[11px] text-slate-300">
+                  melhor: {h.best.strategy_name} · {h.best.symbol} {h.best.timeframe}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -88,7 +144,7 @@ function Ranking() {
         <label className="flex items-center gap-2 text-sm text-slate-300">
           <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} /> só aprovadas
         </label>
-        <span className="ml-auto text-xs text-muted">A ordenação escolhida fica em Configurações → Estrategista.</span>
+        <span className="ml-auto text-xs text-muted">A ordenação fica em Config. → Ajustes finos → Estela.</span>
       </div>
       {q.isLoading ? (
         <Loading />
@@ -128,6 +184,11 @@ function Ranking() {
                   <tr key={r.id} onClick={() => setDetail(r.id)} className="cursor-pointer border-b border-line/60 hover:bg-panel2">
                     <td className="px-3 py-2">
                       <b>{r.symbol}</b> <span className="text-muted">{r.timeframe}</span>
+                      {r.horizon && (
+                        <span className="block text-[10px] text-muted" title={r.avg_minutes != null ? `tempo médio em posição: ${num(r.avg_minutes, 0)} min` : undefined}>
+                          {HORIZON_LABEL[r.horizon] ?? r.horizon}
+                        </span>
+                      )}
                     </td>
                     <td className="px-2">
                       {r.strategy_name} <span className="text-[10px] text-muted">({r.source})</span>

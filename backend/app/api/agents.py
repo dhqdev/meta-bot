@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.agents.skills import active_lessons
 from app.db import session_scope
 from app.deps import current_user, get_office
-from app.models import Activity, Lesson, SkillEvent, User
+from app.models import Activity, AgentMessage, Lesson, SkillEvent, User
 
 router = APIRouter(prefix="/api", tags=["agents"])
 
@@ -75,6 +75,16 @@ def activity(limit: int = Query(100, le=500), agent: str | None = None, user: Us
         if agent:
             q = q.where(Activity.agent == agent)
         return [{"id": a.id, "ts": a.ts.isoformat(), "agent": a.agent, "kind": a.kind, "level": a.level, "text": a.text, "data": a.data} for a in s.scalars(q)]
+
+
+@router.get("/messages")
+def messages(limit: int = Query(100, le=500), agent: str | None = None, user: User = Depends(current_user)) -> list[dict]:
+    """Conversa da equipe (mais recentes primeiro). Com ``agent``, só as que ele mandou ou recebeu."""
+    with session_scope() as s:
+        q = select(AgentMessage).order_by(AgentMessage.ts.desc()).limit(limit)
+        if agent:
+            q = q.where((AgentMessage.sender == agent) | (AgentMessage.recipient == agent) | (AgentMessage.recipient == "all"))
+        return [{"id": m.id, "ts": m.ts.isoformat(), "sender": m.sender, "recipient": m.recipient, "kind": m.kind, "text": m.text, "data": m.data} for m in s.scalars(q)]
 
 
 @router.get("/lessons")

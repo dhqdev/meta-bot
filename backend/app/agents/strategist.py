@@ -25,6 +25,7 @@ from app.agents.skills import SkillDef
 from app.core.backtest import CostModel, RiskParams
 from app.core.bars import Bars
 from app.core.evaluation import Candidate, evaluate, evolve
+from app.core.horizons import HORIZONS, ORDER, horizon_of, label as horizon_label, minutes_from_metrics
 from app.core.metrics import ApprovalRules, RANK_LABELS, equity_curve
 from app.core.risk import value_per_price_unit
 from app.core.strategies import REGISTRY, STRATEGIES, apply_filters, get_strategy
@@ -39,6 +40,7 @@ SORT_KEY = {"win_rate": "wilson_lb", "expectancy": "expectancy_r", "profit_facto
 
 def profile_dict(p: StrategyProfile) -> dict:
     strat = REGISTRY.get(p.strategy)
+    minutes = minutes_from_metrics(p.metrics, TIMEFRAME_SECONDS.get(p.timeframe, 3600))
     return {
         "id": p.id,
         "symbol": p.symbol,
@@ -57,11 +59,21 @@ def profile_dict(p: StrategyProfile) -> dict:
         "is_metrics": p.is_metrics,
         "oos_metrics": p.oos_metrics,
         "live": p.live,
+        "avg_minutes": round(minutes, 1) if minutes is not None else None,
+        "horizon": horizon_of(minutes),
         "hour_stats": p.hour_stats,
         "data_source": p.data_source,
         "tested_at": p.tested_at.isoformat() if p.tested_at else None,
         "evolved_at": p.evolved_at.isoformat() if p.evolved_at else None,
     }
+
+
+def _profile_risk(risk: dict, timeframe: str) -> dict:
+    out = {"sl_atr": risk.get("sl_atr"), "tp_r": risk.get("tp_r")}
+    max_bars = int(risk.get("max_bars") or 0)
+    if max_bars and max_bars != DEFAULT_MAX_BARS.get(timeframe, 60):
+        out["max_bars"] = max_bars
+    return out
 
 
 class StrategistAgent(Agent):
@@ -124,7 +136,7 @@ class StrategistAgent(Agent):
             "break_even_r": exits["break_even_r"],
             "trailing_start_r": exits["trailing_start_r"],
             "trailing_atr": exits["trailing_atr"],
-            "max_bars": cfg.max_bars_in_trade or DEFAULT_MAX_BARS.get(timeframe, 60),
+            "max_bars": cfg.max_bars_in_trade or int(base.get("max_bars") or 0) or DEFAULT_MAX_BARS.get(timeframe, 60),
         }
 
     def enabled_strategies(self) -> list[str]:
@@ -185,9 +197,9 @@ class StrategistAgent(Agent):
             if top:
                 best = top[0]
                 m = best["metrics"]
-                self.say(f"🏆 {best['strategy_name']} em {best['symbol']} {best['timeframe']}: {m['win_rate']:.0%} de acerto".replace(".", ","), "🏆")
+                self.tell("manager", "🏆 " + self.line("ranking_top", name=best["strategy_name"], symbol=best["symbol"], timeframe=best["timeframe"], win_rate=f"{m['win_rate']:.0%}"), kind="info")
             else:
-                self.say("Nenhuma estratégia passou nos critérios desta vez.", "🤔")
+                self.say("🤔 " + self.line("ranking_none"), "🤔")
             self.log(
                 f"Ranking atualizado: {total} backtests em {elapsed:.0f}s, {approved} aprovados (ordenado por {RANK_LABELS.get(cfg.rank_by, cfg.rank_by)})",
                 kind="strategy",
@@ -220,7 +232,7 @@ class StrategistAgent(Agent):
                     s.add(row)
                 row.params = ev.candidate.params
                 row.filters = ev.candidate.filters
-                row.risk = {"sl_atr": ev.candidate.risk.get("sl_atr"), "tp_r": ev.candidate.risk.get("tp_r")}
+                row.risk = _profile_risk(ev.candidate.risk, tf)
                 if row.status != "observacao":
                     row.status = "aprovada" if ev.approved else "reprovada"
                 row.score = ev.score
@@ -260,6 +272,42 @@ class StrategistAgent(Agent):
         key = SORT_KEY.get(cfg.rank_by, "wilson_lb")
         rows.sort(key=lambda p: (p["status"] == "aprovada", (p["metrics"] or {}).get(key, 0), p["score"]), reverse=True)
         return rows[:limit]
+
+    def horizon_summary(self, days: int = 30) -> dict:
+        """Scalper x day trade x posição longa: o que os backtests e as operações reais mostram."""
+        out = {h: {"key": h, **HORIZONS[h], "profiles": 0, "approved": 0, "bt_win_rate": 0.0, "bt_expectancy_r": 0.0, "bt_oos_expectancy_r": 0.0,
+                   "live_trades": 0, "live_wins": 0, "live_r": 0.0, "live_pnl": 0.0, "best": None} for h in ORDER}
+        acc: dict[str, list] = {h: [] for h in ORDER}
+        for p in self.ranking(limit=1000):
+            h = p["horizon"]
+            if h not in out or not (p["metrics"] or {}).get("trades"):
+                continue
+            out[h]["profiles"] += 1
+            if p["status"] == "aprovada":
+                out[h]["approved"] += 1
+                acc[h].append(p)
+                if out[h]["best"] is None:
+                    out[h]["best"] = {"strategy_name": p["strategy_name"], "symbol": p["symbol"], "timeframe": p["timeframe"], "win_rate": p["metrics"].get("win_rate")}
+        for h, rows in acc.items():
+            if rows:
+                out[h]["bt_win_rate"] = round(sum((r["metrics"] or {}).get("win_rate", 0) for r in rows) / len(rows), 4)
+                out[h]["bt_expectancy_r"] = round(sum((r["metrics"] or {}).get("expectancy_r", 0) for r in rows) / len(rows), 4)
+                out[h]["bt_oos_expectancy_r"] = round(sum((r["oos_metrics"] or {}).get("expectancy_r", 0) for r in rows) / len(rows), 4)
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        with session_scope() as s:
+            for t in s.scalars(select(Trade).where(Trade.status == "closed", Trade.exit_time >= since)):
+                if t.exit_time is None or t.entry_time is None:
+                    continue
+                h = horizon_of((t.exit_time - t.entry_time).total_seconds() / 60)
+                row = out[h]
+                row["live_trades"] += 1
+                row["live_wins"] += int(t.pnl > 0)
+                row["live_r"] = round(row["live_r"] + t.pnl_r, 3)
+                row["live_pnl"] = round(row["live_pnl"] + t.pnl, 2)
+        for row in out.values():
+            row["label"] = horizon_label(row["key"])
+            row["live_win_rate"] = round(row["live_wins"] / row["live_trades"], 4) if row["live_trades"] else None
+        return {"horizons": [out[h] for h in ORDER], "days": days}
 
     # ----------------------------------------------------------- evolução
     async def run_evolution(self, limit: int = 6) -> int:
@@ -312,7 +360,7 @@ class StrategistAgent(Agent):
                     continue
                 row.params = best.candidate.params
                 row.filters = best.candidate.filters
-                row.risk = {"sl_atr": best.candidate.risk.get("sl_atr"), "tp_r": best.candidate.risk.get("tp_r")}
+                row.risk = _profile_risk(best.candidate.risk, tf)
                 row.version = (row.version or 1) + 1
                 row.status = "aprovada" if best.approved else row.status
                 row.score = best.score
@@ -338,7 +386,7 @@ class StrategistAgent(Agent):
             self.skills.gain(key, 25, "evolução confirmada fora da amostra")
             self.skills.gain("evolucao", 15, "evolução adotada")
             self.log(text, kind="evolution")
-            self.say(f"🧬 {strat.name} ({symbol} {tf}) evoluiu para v{new_version}!", "🧬")
+            self.tell("all", "🧬 " + self.line("evolved", name=strat.name, symbol=symbol, timeframe=tf, version=new_version), kind="comemoracao")
         if adopted == 0:
             self.log(f"Estudei {len(picks)} estratégias: nenhuma variação superou a atual nas duas partes do histórico", kind="evolution")
         self.idle("Acompanhando os setups")
@@ -436,14 +484,14 @@ class StrategistAgent(Agent):
                 symbol=setup["symbol"], timeframe=setup["timeframe"], strategy=strat.key, direction=side,
                 entry_type=entry_type, price=price, trigger=trigger, sl=sl, tp=tp, atr=atr,
                 bar_time=int(bars.time[i]), profile_id=setup["profile_id"], decision_id=setup.get("decision_id"),
-                expires_at=expires, context={"risk_mult": setup.get("risk_mult", 1.0), "tp_r": risk.tp_r},
+                expires_at=expires, context={"risk_mult": setup.get("risk_mult", 1.0), "tp_r": risk.tp_r, "max_bars": risk.max_bars},
             )
             s.add(sig)
             s.flush()
             sig_id = sig.id
         verb = "COMPRA" if direction > 0 else "VENDA"
         self.work(f"Levando sinal de {verb} em {setup['symbol']} ao Gerente", "agent:manager", "📈")
-        self.say(f"📈 Sinal de {verb} em {setup['symbol']} {setup['timeframe']} ({strat.name})", "📈", to="manager")
+        self.tell("manager", "📈 " + self.line("signal", side=verb.lower(), symbol=setup["symbol"], timeframe=setup["timeframe"], name=strat.name), kind="pedido")
         self.log(f"Sinal de {verb.lower()} em {setup['symbol']} {setup['timeframe']} pela {strat.name} (preço {price:g}, stop {sl:g})", kind="signal")
         self.skills.gain(strat.key, 1, "sinal ao vivo")
         await self.office.submit_signal(sig_id)
@@ -481,7 +529,7 @@ class StrategistAgent(Agent):
             i = bars.n - 1
             is_long = direction == "buy"
             if (is_long and (sigs.long_exit[i] or sigs.short_entry[i])) or (not is_long and (sigs.short_exit[i] or sigs.long_entry[i])):
-                self.say(f"Saída pela estratégia em {symbol}", "🚪", to="cashier")
+                self.tell("cashier", f"🚪 Caio, a estratégia pediu saída em {symbol}.", kind="pedido")
                 await self.office.agent("cashier").request_close(tid, "sinal de saída da estratégia")
 
     # ----------------------------------------------------- backtest manual

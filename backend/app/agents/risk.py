@@ -1,9 +1,11 @@
-"""Rita, a gerente de risco (sem IA): tamanho da posição, limites e trava geral.
+"""Rita, a gerente de risco (sem IA): tamanho da posição, metas do dia e trava geral.
 
 - Lote pelo risco: arrisca X% do patrimônio entre a entrada e o stop, com o
   valor do tick informado pela corretora.
-- Limites: perda diária máxima, queda máxima desde o pico (trava geral),
-  posições simultâneas, por ativo e exposição por moeda, e spread.
+- Metas do dia: ao bater o limite de perda ou a meta de ganho (em % ou em
+  dinheiro), encerra as posições e a equipe para de operar até o dia seguinte.
+- Limites: queda máxima desde o pico (trava geral), posições simultâneas, por
+  ativo e exposição por moeda, e spread.
 - Risco adaptativo (skill): reduz o risco depois de perdas seguidas e volta
   aos poucos depois de ganhos.
 """
@@ -66,6 +68,13 @@ class RiskAgent(Agent):
         if self.due("guard", 30):
             await self.guard()
 
+    @staticmethod
+    def _to_money(value: float, unit: str, base: float) -> float:
+        """Meta/limite em dinheiro (0 = desligado)."""
+        if value <= 0:
+            return 0.0
+        return value if unit == "money" else base * value / 100.0
+
     async def guard(self) -> None:
         cfg = get_config()
         st = self.state_kv()
@@ -74,6 +83,7 @@ class RiskAgent(Agent):
         except Exception:
             return
         equity = float(acc.get("equity") or 0)
+        currency = acc.get("currency") or ""
         mode = cfg.mode
         today = self._today_start()
         key = f"{mode}:{today.date().isoformat()}"
@@ -81,34 +91,50 @@ class RiskAgent(Agent):
             st["day_key"] = key
             st["day_start_equity"] = equity
             if st.get("day_blocked"):
-                self.log("Novo dia: limite de perda diária liberado", kind="risk")
+                self.log("Novo dia: metas zeradas, a equipe pode operar de novo", kind="risk")
             st["day_blocked"] = False
+            st["day_stop"] = None
+            st["day_stop_pnl"] = None
         peak_key = f"peak_{mode}"
         st[peak_key] = max(float(st.get(peak_key) or 0), equity)
         day_start = float(st.get("day_start_equity") or equity) or equity
         day_pnl = equity - day_start
         day_pct = day_pnl / day_start * 100 if day_start else 0.0
         dd_pct = (st[peak_key] - equity) / st[peak_key] * 100 if st[peak_key] else 0.0
-        if not st.get("day_blocked") and day_pct <= -cfg.max_daily_loss_pct:
-            st["day_blocked"] = True
-            self.set_state("alert", "desk", "Perda diária no limite: novas entradas bloqueadas até amanhã", "🛑")
-            self.say(f"🛑 Perda do dia {day_pct:.1f}%: parei as entradas até amanhã.".replace(".", ","), "🛑")
-            self.log(f"Limite de perda diária atingido ({day_pct:.2f}%). Entradas bloqueadas até o próximo dia.".replace(".", ","), kind="risk", level="warning")
+        loss_money = self._to_money(cfg.daily_loss_limit, cfg.daily_loss_unit, day_start)
+        target_money = self._to_money(cfg.daily_profit_target, cfg.daily_profit_unit, day_start)
+        if not st.get("day_blocked"):
+            if loss_money > 0 and day_pnl <= -loss_money:
+                await self._stop_day(st, "loss", day_pnl, currency)
+            elif target_money > 0 and day_pnl >= target_money:
+                await self._stop_day(st, "target", day_pnl, currency)
         if not st.get("kill_switch") and dd_pct >= cfg.max_drawdown_pct:
             st["kill_switch"] = True
             st["kill_reason"] = f"queda de {dd_pct:.1f}% desde o pico"
             self.set_state("alert", "desk", "TRAVA GERAL: queda máxima atingida", "🚨")
-            self.say("🚨 Trava geral acionada: queda máxima atingida!", "🚨")
+            self.tell("all", "🚨 Trava geral acionada: queda máxima atingida! Ninguém entra até o dono liberar.", kind="alerta")
             self.log(f"Trava geral: queda de {dd_pct:.2f}% desde o pico (limite {cfg.max_drawdown_pct}%). Nenhuma entrada até você liberar em Configurações.".replace(".", ","), kind="risk", level="error")
         self.save_state(st)
         open_pos = self._open_positions(mode)
+        room_money = max(0.0, loss_money + min(day_pnl, 0.0)) if loss_money > 0 else None
         self._status = {
             "mode": mode,
+            "currency": currency,
             "equity": round(equity, 2),
+            "day_start_equity": round(day_start, 2),
             "day_pnl": round(day_pnl, 2),
             "day_pct": round(day_pct, 3),
-            "daily_limit_pct": cfg.max_daily_loss_pct,
-            "daily_room_pct": round(max(0.0, cfg.max_daily_loss_pct + min(day_pct, 0.0)), 3),
+            "daily_loss_money": round(loss_money, 2),
+            "daily_target_money": round(target_money, 2),
+            "daily_loss_limit": cfg.daily_loss_limit,
+            "daily_loss_unit": cfg.daily_loss_unit,
+            "daily_profit_target": cfg.daily_profit_target,
+            "daily_profit_unit": cfg.daily_profit_unit,
+            "daily_room_money": round(room_money, 2) if room_money is not None else None,
+            "daily_room_pct": round(room_money / day_start * 100, 3) if room_money is not None and day_start else None,
+            "target_progress": round(max(0.0, day_pnl) / target_money, 3) if target_money > 0 else None,
+            "day_stop": st.get("day_stop"),
+            "day_stop_pnl": st.get("day_stop_pnl"),
             "drawdown_pct": round(dd_pct, 3),
             "max_drawdown_pct": cfg.max_drawdown_pct,
             "kill_switch": bool(st.get("kill_switch")),
@@ -126,10 +152,44 @@ class RiskAgent(Agent):
         if self.due("dd_xp", 86400) and not st.get("kill_switch") and dd_pct < cfg.max_drawdown_pct / 2:
             self.skills.gain("controle_drawdown", 5, "dia dentro dos limites")
 
+    async def _stop_day(self, st: dict, kind: str, day_pnl: float, currency: str) -> None:
+        """Bateu a meta ou o limite do dia: encerra as posições (se configurado) e a equipe para."""
+        cfg = get_config()
+        st["day_blocked"] = True
+        st["day_stop"] = kind
+        st["day_stop_pnl"] = round(day_pnl, 2)
+        self.save_state(st)
+        pnl_txt = f"{day_pnl:+.2f} {currency}".strip().replace(".", ",")
+        if kind == "target":
+            self.set_state("alert", "desk", f"Meta do dia batida ({pnl_txt}): equipe parada até amanhã", "🎯")
+            self.tell("all", self.line("target", pnl=pnl_txt), kind="comemoracao", data={"pnl": day_pnl})
+            self.log(f"Meta de ganho do dia atingida ({pnl_txt}). A equipe para de operar até amanhã.", kind="risk")
+            self.skills.gain("controle_drawdown", 10, "meta do dia batida")
+        else:
+            self.set_state("alert", "desk", f"Limite de perda do dia ({pnl_txt}): equipe parada até amanhã", "🛑")
+            self.tell("all", self.line("loss", pnl=pnl_txt), kind="alerta", data={"pnl": day_pnl})
+            self.log(f"Limite de perda do dia atingido ({pnl_txt}). A equipe para de operar até amanhã.", kind="risk", level="warning")
+        cashier = self.office.agent("cashier")
+        cashier.cancel_pending("dia encerrado pela Rita")
+        if cfg.close_on_daily_limit and self._open_positions(cfg.mode):
+            self.tell("cashier", self.line("close_all"), kind="pedido")
+            await cashier.close_all("meta do dia" if kind == "target" else "limite do dia")
+        manager = self.office.agent("manager")
+        manager.end_day(kind)
+
+    def day_stopped(self) -> str | None:
+        """"target" ou "loss" quando a equipe já encerrou o dia; None se ainda pode operar."""
+        st = self.state_kv()
+        if not st.get("day_blocked"):
+            return None
+        if st.get("day_key", "").split(":")[-1] != self._today_start().date().isoformat():
+            return None  # virou o dia e o guarda ainda não rodou
+        return st.get("day_stop") or "loss"
+
     def status(self) -> dict:
         if not self._status:
             cfg = get_config()
-            return {"daily_room_pct": cfg.max_daily_loss_pct, "open_positions": 0, "max_positions": cfg.max_open_positions, "kill_switch": False}
+            return {"daily_loss_limit": cfg.daily_loss_limit, "daily_loss_unit": cfg.daily_loss_unit, "open_positions": 0, "max_positions": cfg.max_open_positions, "kill_switch": False}
         return self._status
 
     def _today_start(self) -> datetime:
@@ -149,7 +209,7 @@ class RiskAgent(Agent):
         if st.get("kill_switch"):
             return Verdict(False, f"trava geral ativa ({st.get('kill_reason', '')})")
         if st.get("day_blocked"):
-            return Verdict(False, "limite de perda diária atingido")
+            return Verdict(False, "meta do dia batida: equipe parada até amanhã" if st.get("day_stop") == "target" else "limite de perda do dia atingido")
         open_pos = self._open_positions(cfg.mode)
         if len(open_pos) >= cfg.max_open_positions:
             return Verdict(False, f"já há {len(open_pos)} posições abertas (limite {cfg.max_open_positions})")
@@ -211,6 +271,8 @@ class RiskAgent(Agent):
             mult = min(1.0, mult * 1.25)
         if mult != st.get("adaptive_mult"):
             self.log(f"Risco adaptativo agora em {mult:.0%} do normal".replace(".", ","), kind="risk")
+            if mult < float(st.get("adaptive_mult", 1.0)):
+                self.tell("manager", "🛡️ " + self.line("adaptive", pct=f"{mult:.0%}"), kind="info")
         st["adaptive_mult"] = round(mult, 4)
         self.save_state(st)
         if trade.risk_money > 0 and abs(trade.pnl) <= trade.risk_money * 1.3:

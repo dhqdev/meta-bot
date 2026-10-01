@@ -11,7 +11,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.deps import COOKIE_NAME, user_from_token, ws_office
 from app.events import bus
-from app.models import Activity
+from app.models import Activity, AgentMessage
 
 router = APIRouter()
 
@@ -37,6 +37,10 @@ async def office_ws(websocket: WebSocket) -> None:
             {"type": "activity", "id": a.id, "agent": a.agent, "kind": a.kind, "level": a.level, "text": a.text, "data": a.data, "ts": a.ts.isoformat()}
             for a in db.scalars(select(Activity).order_by(Activity.ts.desc()).limit(60))
         ] if user else []
+        messages = [
+            {"type": "message", "id": m.id, "sender": m.sender, "recipient": m.recipient, "kind": m.kind, "text": m.text, "data": m.data, "ts": m.ts.isoformat()}
+            for m in db.scalars(select(AgentMessage).order_by(AgentMessage.ts.desc()).limit(80))
+        ] if user else []
     finally:
         db.close()
     if user is None:
@@ -48,6 +52,7 @@ async def office_ws(websocket: WebSocket) -> None:
     try:
         snapshot = office.snapshot() if office else {"type": "snapshot", "agents": [], "system": {}, "office": {}}
         snapshot["activity"] = list(reversed(recent))
+        snapshot["messages"] = list(reversed(messages))
         await websocket.send_json(snapshot)
         while True:
             try:

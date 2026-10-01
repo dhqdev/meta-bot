@@ -1,0 +1,25 @@
+{
+  "name": "META-BOT · Escritório de Trading",
+  "short_name": "META-BOT",
+  "description": "Equipe de agentes de trading com IA: escritório ao vivo, conversa da equipe, daily e metas do dia.",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0d121c",
+  "theme_color": "#0d121c",
+  "categories": ["finance", "business", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Daily", "short_name": "Daily", "description": "Relatórios da reunião de fim de dia", "url": "/daily", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Operações", "short_name": "Operações", "description": "Operações abertas e o histórico", "url": "/operacoes", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ]
+}
