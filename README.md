@@ -90,15 +90,15 @@ A conta simulada funciona como uma conta de verdade: **preços reais**, spread d
 
 | Ativo (como na corretora) | De onde vem o preço | Atraso |
 |---|---|---|
-| Forex (EURUSD, GBPUSD, USDJPY, EURJPY…) | Yahoo Finance | tempo real |
+| Forex (EURUSD, GBPUSD, USDJPY, EURJPY…) | Yahoo Finance; reserva: Kraken | tempo real |
 | Ouro (XAUUSD) | Binance (PAX Gold, 1 token = 1 onça); reserva: futuro no Yahoo | tempo real |
 | Cripto (BTCUSD, ETHUSD, SOLUSD…) | Binance (livro de ofertas); reserva: Yahoo | tempo real |
 | S&P 500, Dow Jones, Nasdaq (US500, US30, NAS100) | Yahoo Finance (índice à vista, no pregão de Nova York) | tempo real |
 | DAX, FTSE, Nikkei, prata, petróleo | Yahoo Finance | 10 a 20 min |
-| Mini índice (WIN$N) e mini dólar (WDO$N) | Yahoo Finance (Ibovespa e dólar comercial) | 15 min / tempo real |
+| Mini índice (WIN$N) e mini dólar (WDO$N) | Yahoo Finance (Ibovespa e dólar comercial); reserva do dólar: USDT/BRL da Binance | 15 min / tempo real |
 | Ações da B3 (PETR4, VALE3…) | Yahoo Finance | 15 min |
 
-- Aceita os nomes com sufixo de corretora (EURUSDm, XAUUSD.a…). O histórico é baixado uma vez e depois só o trecho novo, para não abusar das fontes.
+- Aceita os nomes com sufixo de corretora (EURUSDm, XAUUSD.a…). O histórico é baixado uma vez e depois só o trecho novo, para não abusar das fontes. O Yahoo é acessado como um navegador (ele recusa outros programas); se uma fonte cair, entra a reserva.
 - O mercado fecha de verdade: fim de semana, fora do pregão e feriados (sem preço novo), nada entra.
 - O **Tito** confere a cada minuto se os preços estão chegando e avisa a equipe se pararem; sem preço novo, ninguém entra.
 - Com o **MT5 conectado**, os preços passam a vir da sua corretora. Sem internet (ou escolhendo em **Config. → Ajustes finos → Conta simulada e MT5**), dá para voltar ao **mercado simulado**, que serve só para testes.

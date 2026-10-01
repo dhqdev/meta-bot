@@ -177,7 +177,8 @@ class ScheduleAgent(Agent):
         hours = (bars.time // 3600) % 24
         rng = (bars.high - bars.low) / bars.close
         spread = np.where(bars.spread > 0, bars.spread / bars.close, np.nan)
-        eff = np.where(bars.high > bars.low, np.abs(bars.close - bars.open) / (bars.high - bars.low), 0.0)
+        span = bars.high - bars.low
+        eff = np.divide(np.abs(bars.close - bars.open), span, out=np.zeros_like(span), where=span > 0)  # candle parado (máxima = mínima) conta 0
         rows = []
         for h in range(24):
             m = hours == h
