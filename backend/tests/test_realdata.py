@@ -243,7 +243,7 @@ def test_forex_falls_back_to_kraken_when_yahoo_refuses():
         df = await market.rates("EURUSD", 300, 500)
         assert len(df) == 500 and api.count("kraken", pair="EURUSD", interval="5") == 1
         tick = await market.tick("EURUSD")
-        assert "Kraken" in tick["source"] and tick["ask"] > tick["bid"]
+        assert "Kraken" in tick["source"] and tick["ask"] - tick["bid"] == pytest.approx(12e-5, abs=1.1e-5)  # spread de corretora, não o da Kraken
         spec = await market.spec("USDJPY")  # valor do tick em dólar pela cotação da Kraken
         assert spec["tick_value"] == pytest.approx(100 / (150 * 1.00005), rel=1e-3)
 

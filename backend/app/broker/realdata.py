@@ -464,7 +464,9 @@ class RealMarket:
                 return cached[1]
             raise RealDataError(f"sem cotação real de {symbol}: {'; '.join(errors)}")
         mid = (bid + ask) / 2 * route.scale
-        real_spread = (ask - bid) * route.scale if option.provider != "yahoo" else 0.0
+        # spread de corretora (tabela do ativo); o livro da Binance só conta quando é maior que isso.
+        # A Kraken tem forex pouco líquido: o spread dela não representa uma corretora e faria a Rita vetar à toa.
+        real_spread = (ask - bid) * route.scale if option.provider == "binance" else 0.0
         spec = self._static_spec(symbol, route, mid)
         half = max(spec["spread_points"] * spec["point"], real_spread) / 2
         now = time.time()
