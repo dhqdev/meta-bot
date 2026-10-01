@@ -87,6 +87,7 @@ class RuntimeConfig(BaseModel):
     min_hour_quality: float = Field(0.35, ge=0, le=1)
     use_news_filter: bool = True
     news_block_threshold: float = Field(0.55, ge=0.1, le=1)
+    position_review_minutes: int = Field(60, ge=0, le=720)  # Gustavo revisa as posições abertas (0 = desligado)
 
     # --- Caixa (Caio)
     break_even_r: float = Field(1.0, ge=0, le=5)
@@ -112,6 +113,7 @@ class RuntimeConfig(BaseModel):
     # --- Daily (reunião de fim de dia com relatório e aprendizado)
     daily_meeting_enabled: bool = True
     daily_meeting_time: str = "19:00"
+    daily_break_minutes: int = Field(60, ge=0, le=720)  # escritório fechado depois da daily (0 = sem pausa)
 
     # --- IA (OpenRouter, modelo fixo por agente)
     ai_enabled: bool = True

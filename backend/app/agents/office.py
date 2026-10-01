@@ -6,7 +6,8 @@ import asyncio
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, select, update
 
@@ -28,10 +29,12 @@ from app.db import session_scope
 from app.events import bus, record_activity
 from app.kv import kv_get, kv_set
 from app.models import KV, EquitySnapshot, Lesson, Signal, StrategyProfile, Trade
-from app.runtime import get_config
+from app.runtime import get_config, update_config
 from app.services.llm import LLMService
 
 log = logging.getLogger("metabot.office")
+
+BREAK_KEY = "office.break"
 
 AGENT_CLASSES = [InfraAgent, NewsAgent, ScheduleAgent, StrategistAgent, ManagerAgent, RiskAgent, CashierAgent, AuditorAgent]
 
@@ -67,6 +70,8 @@ class Office:
         for agent in self.agents.values():
             self.tasks.append(asyncio.create_task(agent.run_forever(), name=f"agent-{agent.id}"))
         self.tasks.append(asyncio.create_task(self.daily_loop(), name="daily"))
+        if not self.check_break():
+            self.publish_office(office_break=self.break_info() or {})
         log.info("escritório aberto com %d agentes", len(self.agents))
 
     # ------------------------------------------------- origem dos preços
@@ -131,16 +136,71 @@ class Office:
         log.info("origem dos preços: %s -> %s (aprendizado reiniciado)", previous, family)
 
     async def daily_loop(self) -> None:
-        """Confere a cada 30 s se chegou a hora da daily."""
+        """Confere a cada 30 s se chegou a hora da daily e se a pausa depois dela já acabou."""
         while True:
             await asyncio.sleep(30)
             try:
+                self.check_break()
                 if self.daily.due():
                     await self.daily.run()
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("falha na daily")
+
+    # ------------------------------------------------- pausa depois da daily
+    @staticmethod
+    def break_info() -> dict | None:
+        info = kv_get(BREAK_KEY)
+        return info if isinstance(info, dict) and info.get("until") else None
+
+    def start_break(self, minutes: int) -> None:
+        """Depois da daily automática: escritório fecha por ``minutes`` e reabre sozinho.
+
+        Ninguém abre posição nova na pausa (plano vazio e ordens stop armadas canceladas); o Caio
+        continua protegendo as posições abertas (stop, alvo e trailing)."""
+        now = datetime.now(timezone.utc)
+        until = now + timedelta(minutes=minutes)
+        info = {"until": until.isoformat(), "started": now.isoformat(), "minutes": int(minutes)}
+        kv_set(BREAK_KEY, info)
+        update_config({"system_running": False})
+        bus.publish({"type": "system", "running": False})
+        self.agents["cashier"].cancel_pending("pausa depois da daily")
+        self.publish_office(office_break=info)
+        back = until.astimezone(ZoneInfo(self.settings.timezone)).strftime("%H:%M")
+        text = f"🌙 Daily feita! Escritório fechado por {minutes} min para a equipe descansar; voltamos às {back}. O Caio segue de olho nas posições abertas."
+        self.agents["manager"].tell("all", text, kind="daily", data={"break_until": info["until"]})
+        record_activity("manager", f"Pausa depois da daily: escritório fechado até {back} (reabre sozinho)", kind="system")
+        self._wake_all()
+
+    def check_break(self) -> bool:
+        """Pausa vencida → reabre o escritório. Devolve True se reabriu agora."""
+        info = self.break_info()
+        if info is None:
+            return False
+        if datetime.now(timezone.utc).isoformat() < info["until"]:
+            return False
+        self.end_break(reopen=True)
+        return True
+
+    def end_break(self, reopen: bool) -> None:
+        """Encerra a pausa. ``reopen=False`` quando o dono ligou/desligou na mão (vale a escolha dele)."""
+        if self.break_info() is None:
+            return
+        kv_set(BREAK_KEY, None)
+        self.publish_office(office_break={})
+        if not reopen:
+            return
+        update_config({"system_running": True})
+        bus.publish({"type": "system", "running": True})
+        self.agents["manager"].tell("all", "☀️ Fim da pausa! Escritório aberto de novo: cada um na sua mesa, aplicando o que combinamos na daily.", kind="daily")
+        record_activity("manager", "Pausa encerrada: escritório aberto de novo", kind="system")
+        self._wake_all()
+
+    def _wake_all(self) -> None:
+        """Acorda os agentes para perceberem na hora que o escritório fechou/abriu (sem forçar tarefas)."""
+        for agent in self.agents.values():
+            agent._wake.set()
 
     async def stop(self) -> None:
         for task in self.tasks:

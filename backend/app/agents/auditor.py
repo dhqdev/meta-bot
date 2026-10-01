@@ -62,6 +62,10 @@ class AuditorAgent(Agent):
                     # real claramente abaixo do backtest: nem o melhor cenário estatístico alcança o prometido
                     if n >= 10 and prof.status == "aprovada" and wilson_upper(wins, n) < expected - 0.05 and live["sum_r"] < 0:
                         prof.status = "observacao"
+                        # 24 h fora do plano antes da revalidação (senão o mesmo backtest aprovaria de novo na hora)
+                        live["revalidate_after"] = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+                        live["flagged_by"] = "auditor"
+                        prof.live = dict(live)
                         name = REGISTRY[prof.strategy].name if prof.strategy in REGISTRY else prof.strategy
                         msg = f"{name} em {prof.symbol} {prof.timeframe}: acerto real {wins}/{n} bem abaixo dos {expected:.0%} do backtest. Coloquei em observação para a Estela revalidar."
                         self.log(msg.replace(".", ",", 1), kind="audit", level="warning")

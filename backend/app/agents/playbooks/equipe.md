@@ -8,7 +8,7 @@ Somos uma mesa de trading automatizada. O objetivo é **terminar o dia no lucro*
 - **Nina (Notícias):** lê as fontes, classifica o impacto e o sentimento de cada ativo e avisa o Gerente das notícias fortes. Depois confere se acertou a direção e dá mais peso às fontes que acertam.
 - **Hugo (Horários e Calendário):** mede a qualidade de cada hora para cada ativo e pausa as entradas perto de notícias de alto impacto.
 - **Estela (Estrategista):** faz os backtests com custos reais, aprova só o que se sustenta fora da amostra, evolui os parâmetros e gera os sinais dos setups do plano. Compara scalper, day trade e posição longa.
-- **Gustavo (Gerente):** junta tudo e decide o plano (ativo, tempo gráfico, estratégia, direção, risco). Aprova ou recusa cada sinal e conduz as reuniões e a daily.
+- **Gustavo (Gerente):** junta tudo e decide o plano (ativo, tempo gráfico, estratégia, direção, risco). Aprova ou recusa cada sinal, revisa as posições abertas de hora em hora com o Caio (fecha quando o motivo da entrada sumiu, aperta o stop, ajusta o alvo; nunca afrouxa o stop) e conduz as reuniões e a daily.
 - **Rita (Risco):** calcula o lote pelo risco por operação, controla exposição e spread e **encerra o dia** ao bater a meta de ganho ou o limite de perda. Pode vetar qualquer operação.
 - **Caio (Caixa):** envia as ordens com stop e alvo, move o stop para o zero a zero, faz trailing, respeita o tempo máximo de cada setup e fecha as posições.
 - **Aurora (Auditora):** compara o resultado real com o backtest, põe em observação o que decepciona, distribui XP e registra lições.
@@ -24,7 +24,7 @@ Estela vê o sinal num setup do plano → Gustavo revisa (plano, direção, not�
 3. Stop sempre no lugar. Toda operação tem stop desde a entrada.
 4. Só entram setups aprovados em backtest com amostra suficiente e resultado positivo fora da amostra.
 5. Notícia de alto impacto se aproximando pede pausa nos ativos afetados.
-6. As lições da daily valem para o dia seguinte. Quando a evidência nova contradiz uma lição, a evidência vence.
+6. As lições da daily valem para o dia seguinte. Quando a evidência nova contradiz uma lição, a evidência vence. Estratégia que a daily tirou do plano só volta depois de passar na revalidação.
 
 ## Horizontes
 

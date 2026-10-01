@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app import __version__
 from app.api.auth import confirm_password
 from app.deps import current_user, get_office
-from app.events import record_activity
+from app.events import bus, record_activity
 from app.kv import kv_set
 from app.models import User
 from app.runtime import get_config, update_config
@@ -43,6 +43,7 @@ async def system(user: User = Depends(current_user), office=Depends(get_office))
         "risk": office.agent("risk").status(),
         "plan": office.agent("manager").active_plan(),
         "plan_rationale": office.agent("manager").rationale,
+        "office_break": office.break_info(),
     }
 
 
@@ -52,7 +53,9 @@ class RunBody(BaseModel):
 
 @router.post("/system/running")
 async def set_running(body: RunBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    office.end_break(reopen=False)  # ligar/desligar na mão vale mais que a pausa da daily
     update_config({"system_running": body.running})
+    bus.publish({"type": "system", "running": body.running})
     record_activity("system", "Sistema ligado: a equipe chegou ao escritório" if body.running else "Sistema desligado: sem novas entradas (as posições abertas continuam protegidas)", kind="system")
     for agent in office.agents.values():
         agent.request("*")

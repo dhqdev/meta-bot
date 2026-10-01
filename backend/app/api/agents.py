@@ -17,7 +17,7 @@ JOBS = {
     "news": ["fetch", "classify", "evaluate"],
     "schedule": ["calendar", "hours"],
     "strategist": ["ranking", "evolution", "revalidate"],
-    "manager": ["decide"],
+    "manager": ["decide", "review"],
     "risk": ["guard"],
     "cashier": ["equity", "exits_review"],
     "auditor": ["prune"],

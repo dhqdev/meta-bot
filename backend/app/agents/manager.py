@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
@@ -22,12 +22,15 @@ from sqlalchemy import select
 
 from app.agents.base import Agent, AgentProfile
 from app.agents.personas import persona_prompt
+from app.agents.review import CHECK_BARS, PositionContext, counterfactual, decide as review_decide, learn_patience
 from app.agents.skills import SkillDef, active_lessons, playbook
 from app.config import get_settings
+from app.core.assets import symbol_currencies
+from app.core.horizons import minutes_from_metrics
 from app.db import session_scope
 from app.kv import kv_get, kv_set
-from app.models import Decision, Trade
-from app.runtime import get_config
+from app.models import Decision, StrategyProfile, Trade
+from app.runtime import TIMEFRAME_SECONDS, get_config
 from app.services.llm import to_json
 
 DEFAULT_WEIGHTS = {"strategy": 0.45, "hour": 0.2, "news": 0.15, "live": 0.2}
@@ -69,6 +72,7 @@ class ManagerAgent(Agent):
         SkillDef("tomada_decisao", "Tomada de decisão", "Escolhe setups que dão resultado real."),
         SkillDef("leitura_contexto", "Leitura de contexto", "Combina notícias, horários e calendário na decisão."),
         SkillDef("confianca_equipe", "Calibração da equipe", "Aprende quanto confiar em cada colega a partir dos resultados."),
+        SkillDef("gestao_posicoes", "Revisão de posições", "Revisa as posições abertas com o mercado de agora e aprende com o que teria acontecido."),
     ]
 
     def __init__(self, office):
@@ -84,6 +88,9 @@ class ManagerAgent(Agent):
 
     async def tick(self) -> None:
         cfg = get_config()
+        # revisão das posições abertas (de hora em hora; o botão na tela pede uma agora)
+        if (cfg.position_review_minutes > 0 or "review" in self._forced) and self.due("review", max(1, cfg.position_review_minutes) * 60):
+            await self.review_positions()
         stopped = self.office.agent("risk").day_stopped()
         if stopped:
             if self._ended_day != _local_day():
@@ -272,12 +279,13 @@ class ManagerAgent(Agent):
         cfg = get_config()
         risk = self.office.agent("risk").status()
         schedule = self.office.agent("schedule")
-        lessons = "\n".join(f"- ({l['agent']}) {l['text']}" for l in active_lessons("manager", 10)) or "- (nenhuma ainda)"
+        # todas as lições valem aqui: a Estela, a Rita e o Hugo não usam IA, quem aplica é o Gustavo
+        lessons = "\n".join(f"- ({l['agent']}) {l['text']}" for l in active_lessons(None, 12)) or "- (nenhuma ainda)"
         system = (
             playbook("manager")
             + "\n\n" + playbook("equipe")
             + "\n\n## Sua personalidade\n" + persona_prompt(["manager"])
-            + "\n\n## Lições registradas pela Auditora\n" + lessons
+            + "\n\n## Lições da equipe (daily e Auditora)\n" + lessons
         )
         last_daily = self.office.daily.last_report(before=_local_day())
         focus = "; ".join((last_daily or {}).get("focus", [])[:3]) or "nenhum"
@@ -434,6 +442,216 @@ class ManagerAgent(Agent):
         if cfg.use_news_filter and abs(strength) >= cfg.news_block_threshold and (strength > 0) != (direction == "buy"):
             return False, f"notícias fortes contra a operação ({ns['score']:+.2f})", 1.0
         return True, setup.get("reason", ""), float(setup.get("risk_mult", 1.0))
+
+    # ------------------------------------------------- revisão das posições
+    def patience(self) -> float:
+        return float(kv_get("manager.review_patience") or 0.0)
+
+    def _count_review(self, action: str) -> None:
+        day = _local_day()
+        stats = kv_get("manager.review_day") or {}
+        if stats.get("day") != day:
+            stats = {"day": day, "close": 0, "sl": 0, "tp": 0, "hold": 0}
+        stats[action] = int(stats.get(action, 0)) + 1
+        kv_set("manager.review_day", stats)
+
+    async def _position_context(self, tr: Trade) -> PositionContext | None:
+        cfg = get_config()
+        market = self.office.market
+        spec = await market.spec(tr.symbol)
+        tick = await market.tick(tr.symbol)
+        if not tick.get("open", True):
+            return None
+        d = 1 if tr.direction == "buy" else -1
+        price = tick["bid"] if d > 0 else tick["ask"]
+        risk = abs(tr.entry_price - (tr.initial_sl or tr.entry_price))
+        tf = tr.timeframe or "H1"
+        tf_sec = TIMEFRAME_SECONDS.get(tf, 3600)
+        bars = await market.rates(tr.symbol, tf, 300, closed_only=True, max_age=60)
+        if bars.n < 60:
+            return None
+        atr = bars.atr(14)
+        entry_ts = tr.entry_time.replace(tzinfo=tr.entry_time.tzinfo or timezone.utc).timestamp()
+        # melhor momento da operação: só candles que abriram depois da entrada (a máxima do candle
+        # da entrada pode ter sido antes dela) + o preço de agora
+        after = [i for i in range(bars.n) if bars.time[i] >= entry_ts]
+        i0 = after[0] if after else bars.n
+        if d > 0:
+            best = max([float(x) for x in bars.high[i0:]] + [price])
+        else:
+            best = min([float(x) for x in bars.low[i0:]] + [price])
+        mfe_r = max(0.0, (best - tr.entry_price) * d / risk) if risk > 0 else 0.0
+        ema_f, ema_s = bars.ema(20), bars.ema(50)
+        adx = float(bars.adx(14)[0][-1])
+        gap = (ema_f[-1] - ema_s[-1]) * d
+        slope = (ema_f[-1] - ema_f[-4]) * d
+        trend = "with" if gap > 0 and slope > 0 else "against" if gap < 0 and slope < 0 else "flat"
+        from app.agents.cashier import DEFAULT_MAX_BARS
+
+        max_bars = cfg.max_bars_in_trade or int((tr.context or {}).get("max_bars") or 0) or DEFAULT_MAX_BARS.get(tf, 60)
+        age_s = (datetime.now(timezone.utc) - tr.entry_time.replace(tzinfo=tr.entry_time.tzinfo or timezone.utc)).total_seconds()
+        hours = age_s / 3600
+        age_text = f"{age_s / 60:.0f} min" if hours < 2 else f"{hours:.0f} h"
+        # evento forte antes da próxima revisão (ou dentro da pausa antes do evento)
+        window = max(cfg.position_review_minutes, cfg.blackout_before_min)
+        ccys = symbol_currencies(tr.symbol)
+        now = datetime.now(timezone.utc)
+        event, event_min = None, None
+        for ev in self.office.agent("schedule").upcoming(window / 60 + 0.01, cfg.blackout_impacts):
+            ts = datetime.fromisoformat(ev["ts"])
+            ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+            minutes = (ts - now).total_seconds() / 60
+            if ev["currency"] in ccys and 0 <= minutes <= window:
+                event, event_min = ev, minutes
+                break
+        ns = self.office.agent("news").symbol_score(tr.symbol)
+        strength = float(ns["score"]) * float(ns["confidence"])
+        strategy_ok = True
+        typical = None
+        if tr.profile_id:
+            with session_scope() as s:
+                prof = s.get(StrategyProfile, tr.profile_id)
+                strategy_ok = prof is None or prof.status == "aprovada"
+                avg_min = minutes_from_metrics(prof.metrics, tf_sec) if prof is not None else None
+            if avg_min and avg_min > 0:
+                typical = age_s / (avg_min * 60)
+        return PositionContext(
+            direction=d, entry=tr.entry_price, price=price, sl=tr.sl, tp=tr.tp, risk=risk,
+            spread=float(tick["ask"] - tick["bid"]), point=float(spec.get("point") or 0.0),
+            atr_now=float(atr[-1]), atr_entry=float(atr[min(bars.n - 1, max(0, i0 - 1))]), mfe_r=mfe_r, trend=trend, adx=adx,
+            age_frac=age_s / (max_bars * tf_sec) if max_bars else 0.0, age_text=age_text, typical_frac=typical,
+            event=event, event_minutes=event_min,
+            news_against=cfg.use_news_filter and strength * d <= -cfg.news_block_threshold,
+            strategy_ok=strategy_ok, patience=self.patience(),
+        )
+
+    async def review_positions(self) -> list[dict]:
+        """De hora em hora: olha cada posição aberta com o mercado de agora e decide com o Caio.
+
+        Fechar, apertar o stop (nunca afrouxar) ou mudar o alvo — ver ``app/agents/review.py``.
+        Também confere as saídas antigas da revisão para aprender (paciência)."""
+        cfg = get_config()
+        await self.check_review_outcomes()
+        with session_scope() as s:
+            trades = list(s.scalars(select(Trade).where(Trade.status == "open", Trade.mode == cfg.mode)))
+            s.expunge_all()
+        if not trades:
+            return []
+        cashier = self.office.agent("cashier")
+        self.work(f"Revisando {len(trades)} posição(ões) aberta(s) com o Caio", "agent:cashier", "🔍")
+        results = []
+        now = datetime.now(timezone.utc)
+        for tr in trades:
+            tf_sec = TIMEFRAME_SECONDS.get(tr.timeframe or "H1", 3600)
+            age = (now - tr.entry_time.replace(tzinfo=tr.entry_time.tzinfo or timezone.utc)).total_seconds()
+            if age < max(900, min(tf_sec, 3600)):
+                continue  # acabou de entrar: deixa a operação respirar
+            try:
+                ctx = await self._position_context(tr)
+            except Exception as exc:
+                self.log(f"Não consegui revisar {tr.symbol}: {exc}", kind="decision", level="warning")
+                continue
+            if ctx is None:
+                continue
+            dec = review_decide(ctx)
+            r_txt = f"{ctx.r_now:+.1f}R".replace(".", ",")
+            entry = {"at": now.isoformat(), "action": dec.action, "text": dec.why[:240], "r": round(ctx.r_now, 2), "trend": ctx.trend}
+            results.append({"trade_id": tr.id, "symbol": tr.symbol, **entry})
+            if dec.action == "close":
+                self.tell("cashier", "🔍 " + self.line("review_close", symbol=tr.symbol, r=r_txt, why=dec.why[:120]), kind="pedido", data={"trade_id": tr.id})
+                extra = {"review_close": {"sl": tr.sl, "tp": tr.tp, "price": ctx.price, "r": round(ctx.r_now, 3), "at": now.isoformat()}}
+                await cashier.note_review(tr.id, entry, extra)
+                ok = await cashier.request_close(tr.id, "revisao")
+                cashier.tell("manager", self._done_line(cashier, tr.symbol, ok, "posição encerrada", "não consegui fechar agora"), kind="resposta")
+                self.log(f"Revisão: encerrei {tr.symbol} com {r_txt} — {dec.why}", kind="decision")
+                self._count_review("close")
+                self.skills.gain("gestao_posicoes", 2, f"revisão de {tr.symbol}")
+            elif dec.action == "adjust":
+                parts = []
+                if dec.sl is not None:
+                    parts.append(self.line("review_sl", symbol=tr.symbol, sl=f"{dec.sl:g}", why=dec.why[:120]))
+                if dec.tp is not None and dec.sl is None:
+                    parts.append(self.line("review_tp", symbol=tr.symbol, tp=f"{dec.tp:g}", why=dec.why[:120]))
+                self.tell("cashier", "🔍 " + parts[0], kind="pedido", data={"trade_id": tr.id})
+                ok, what = await cashier.adjust(tr.id, sl=dec.sl, tp=dec.tp, why=dec.why, entry=entry)
+                cashier.tell("manager", self._done_line(cashier, tr.symbol, ok, what, what), kind="resposta")
+                if ok:
+                    if dec.sl is not None:
+                        self._count_review("sl")
+                    if dec.tp is not None:
+                        self._count_review("tp")
+                    self.skills.gain("gestao_posicoes", 2, f"ajuste em {tr.symbol}")
+                else:
+                    await cashier.note_review(tr.id, {**entry, "action": "hold", "text": f"ajuste não aplicado ({what})"})
+            else:
+                await cashier.note_review(tr.id, entry)
+                self.say("🔍 " + self.line("review_hold", symbol=tr.symbol, r=r_txt, why=dec.why[:100]))
+                self._count_review("hold")
+        self.idle("Acompanhando o plano")
+        return results
+
+    def _done_line(self, cashier, symbol: str, ok: bool, what: str, why: str) -> str:
+        if ok:
+            return "✅ " + cashier.line("review_done", what=what, symbol=symbol)
+        return "⚠️ " + cashier.line("review_fail", symbol=symbol, why=why[:80])
+
+    async def check_review_outcomes(self) -> list[dict]:
+        """Confere as saídas da revisão: e se tivesse segurado? Ajusta a paciência do Gustavo."""
+        now = datetime.now(timezone.utc)
+        out = []
+        with session_scope() as s:
+            rows = list(s.scalars(select(Trade).where(Trade.status == "closed", Trade.exit_reason == "revisao", Trade.exit_time >= now - timedelta(days=10))))
+            pending = [
+                (t.id, t.symbol, t.timeframe or "H1", t.direction, t.entry_price, t.initial_sl, t.exit_price, t.exit_time, dict(t.mgmt or {}))
+                for t in rows
+                if (t.mgmt or {}).get("review_close") and not (t.mgmt or {}).get("review_check")
+            ]
+        for tid, symbol, tf, direction, entry, initial_sl, exit_price, exit_time, mg in pending:
+            tf_sec = TIMEFRAME_SECONDS.get(tf, 3600)
+            exit_dt = exit_time.replace(tzinfo=exit_time.tzinfo or timezone.utc)
+            if (now - exit_dt).total_seconds() < CHECK_BARS * tf_sec:
+                continue
+            try:
+                bars = await self.office.market.rates(symbol, tf, 400, closed_only=True, max_age=300)
+            except Exception:
+                continue
+            after = [i for i in range(bars.n) if bars.time[i] >= exit_dt.timestamp()][:CHECK_BARS]
+            if len(after) < CHECK_BARS // 2:
+                continue
+            d = 1 if direction == "buy" else -1
+            risk = abs(entry - (initial_sl or entry))
+            rc = mg["review_close"]
+            cf = counterfactual(d, entry, risk, rc.get("sl"), rc.get("tp"), bars.high[after], bars.low[after], bars.close[after])
+            if cf is None:
+                continue
+            actual = (exit_price - entry) * d / risk if risk > 0 else 0.0
+            diff = round(cf - actual, 2)
+            patience, verdict = learn_patience(self.patience(), diff)
+            kv_set("manager.review_patience", patience)
+            check = {"cf_r": round(cf, 2), "r": round(actual, 2), "diff": diff, "verdict": verdict, "at": now.isoformat()}
+            with session_scope() as s:
+                row = s.get(Trade, tid)
+                if row is not None:
+                    row.mgmt = {**(row.mgmt or {}), "review_check": check}
+            stats = kv_get("manager.review_stats") or {"checked": 0, "good": 0, "early": 0}
+            stats["checked"] = int(stats.get("checked", 0)) + 1
+            if verdict == "acertou":
+                stats["good"] = int(stats.get("good", 0)) + 1
+                self.skills.gain("gestao_posicoes", 6, f"saída de {symbol} evitou {abs(diff):.1f}R de piora".replace(".", ","))
+            elif verdict == "cedo":
+                stats["early"] = int(stats.get("early", 0)) + 1
+            kv_set("manager.review_stats", stats)
+            self.skills.update("gestao_posicoes", params={"patience": patience, **stats})
+            fmt = lambda v: f"{v:+.1f}R".replace(".", ",")  # noqa: E731
+            if verdict == "cedo":
+                text = f"Conferi minha saída de {symbol}: segurando teria feito {fmt(cf)} (saí com {fmt(actual)}). Vou ser um pouco mais paciente."
+            elif verdict == "acertou":
+                text = f"Conferi minha saída de {symbol}: segurando teria feito {fmt(cf)} (saí com {fmt(actual)}). Boa decisão."
+            else:
+                text = f"Conferi minha saída de {symbol}: segurando daria quase o mesmo ({fmt(cf)} x {fmt(actual)})."
+            self.log(text, kind="decision", data=check)
+            out.append({"trade_id": tid, **check})
+        return out
 
     # --------------------------------------------------------- aprendizado
     def on_trade_closed(self, trade: Trade) -> None:

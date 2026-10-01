@@ -36,6 +36,12 @@ from app.runtime import TIMEFRAME_SECONDS, get_config
 BARS_BY_TF = {"M5": 6000, "M15": 5000, "M30": 4000, "H1": 4000, "H4": 3000, "D1": 1500}
 DEFAULT_MAX_BARS = {"M5": 48, "M15": 48, "M30": 48, "H1": 72, "H4": 60, "D1": 30}
 SORT_KEY = {"win_rate": "wilson_lb", "expectancy": "expectancy_r", "profit_factor": "profit_factor", "net": "return_pct"}
+# Revalidação: quantas operações mais recentes do backtest precisam estar no positivo
+RECENT_TRADES = 12
+
+
+def _r(value: float) -> str:
+    return f"{value:+.2f}".replace(".", ",")
 
 
 def profile_dict(p: StrategyProfile) -> dict:
@@ -108,8 +114,9 @@ class StrategistAgent(Agent):
             await self.run_evolution()
         await self.watch_signals()
         await self.watch_exits()
+        forced = "revalidate" in self._forced  # botão na tela: revalida já, sem esperar
         if self.due("revalidate", 1800):
-            await self.revalidate_flagged()
+            await self.revalidate_flagged(ignore_wait=forced)
 
     def _has_profiles(self) -> bool:
         with session_scope() as s:
@@ -233,7 +240,8 @@ class StrategistAgent(Agent):
                 row.params = ev.candidate.params
                 row.filters = ev.candidate.filters
                 row.risk = _profile_risk(ev.candidate.risk, tf)
-                if row.status != "observacao":
+                held = str((row.live or {}).get("blocked_until") or "") > now.isoformat()
+                if row.status != "observacao" and not held:
                     row.status = "aprovada" if ev.approved else "reprovada"
                 row.score = ev.score
                 row.metrics = {**ev.full, "reasons": ev.reasons}
@@ -392,9 +400,21 @@ class StrategistAgent(Agent):
         self.idle("Acompanhando os setups")
         return adopted
 
-    async def revalidate_flagged(self) -> None:
+    async def revalidate_flagged(self, ignore_wait: bool = False) -> None:
+        """Revalida as estratégias em observação (pela daily ou pela Auditora).
+
+        Respeita o tempo fora do plano (``live.revalidate_after``) e só aprova de novo se o
+        backtest com o histórico atualizado passar **e** as operações mais recentes do teste
+        estiverem no positivo (o mercado de agora ainda combina com a estratégia). Reprovada,
+        fica bloqueada por 3 dias (o ranking não a aprova de volta nesse tempo)."""
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         with session_scope() as s:
-            flagged = [(p.id, p.symbol, p.timeframe, p.strategy) for p in s.scalars(select(StrategyProfile).where(StrategyProfile.status == "observacao"))]
+            flagged = [
+                (p.id, p.symbol, p.timeframe, p.strategy)
+                for p in s.scalars(select(StrategyProfile).where(StrategyProfile.status == "observacao"))
+                if ignore_wait or str((p.live or {}).get("revalidate_after") or "") <= now_iso
+            ]
         for pid, symbol, tf, key in flagged:
             try:
                 spec = await self.office.market.spec(symbol)
@@ -405,16 +425,42 @@ class StrategistAgent(Agent):
                 row = s.get(StrategyProfile, pid)
                 cand = Candidate(dict(row.params or {}), dict(row.filters or {}), self.risk_for(key, row.risk, tf))
             ev = await asyncio.to_thread(evaluate, bars, get_strategy(key), cand, self.costs(spec), self.rules(), get_config().rank_by)
+            recent = ev.trades[-RECENT_TRADES:]
+            recent_r = round(sum(t.r for t in recent), 2)
+            recent_ok = len(recent) < 5 or recent_r > 0
+            ok = ev.approved and recent_ok
             with session_scope() as s:
                 row = s.get(StrategyProfile, pid)
-                row.status = "aprovada" if ev.approved else "reprovada"
+                live = {k: v for k, v in (row.live or {}).items() if k not in ("revalidate_after", "flagged_by")}
+                live["revalidated_at"] = now_iso
+                live["recent_r"] = recent_r
+                if ok:
+                    # segunda chance: o resultado real antigo pesa metade (a Auditora volta a medir com dados novos)
+                    n = int(live.get("n", 0))
+                    if n:
+                        live["n"] = n // 2
+                        live["wins"] = int(round(int(live.get("wins", 0)) * (n // 2) / n))
+                        live["sum_r"] = round(float(live.get("sum_r", 0.0)) / 2, 4)
+                    live.pop("blocked_until", None)
+                else:
+                    live["blocked_until"] = (now + timedelta(days=3)).isoformat()
+                row.live = live
+                row.status = "aprovada" if ok else "reprovada"
                 row.metrics = {**ev.full, "reasons": ev.reasons}
                 row.oos_metrics = ev.oos
-                row.tested_at = datetime.now(timezone.utc)
-            verdict = "continua aprovada" if ev.approved else "foi reprovada"
-            self.log(f"Revalidei {get_strategy(key).name} em {symbol} {tf} depois do alerta da Auditora: {verdict}", kind="strategy")
-            if not ev.approved:
-                self.skills.event(key, "demoted", f"reprovada em {symbol} {tf} após resultado real abaixo do esperado")
+                row.tested_at = now
+            name = get_strategy(key).name
+            if ok:
+                verdict = f"voltou para o plano (backtest aprovado e {_r(recent_r)}R nas {len(recent)} operações mais recentes do teste)"
+            elif not ev.approved:
+                verdict = "foi reprovada no backtest com o histórico atualizado; fica fora por 3 dias"
+            else:
+                verdict = f"foi reprovada: as {len(recent)} operações mais recentes do teste deram {_r(recent_r)}R (o mercado de agora não combina); fica fora por 3 dias"
+            self.log(f"Revalidei {name} em {symbol} {tf}: {verdict}", kind="strategy")
+            self.tell("manager", ("✅ " if ok else "⛔ ") + f"Revalidei {name} em {symbol} {tf}: {verdict}.", kind="info")
+            if not ok:
+                self.skills.event(key, "demoted", f"reprovada em {symbol} {tf} na revalidação")
+            self.skills.gain("backtesting", 2, "revalidação")
 
     # ------------------------------------------------------------- sinais
     async def watch_signals(self) -> None:

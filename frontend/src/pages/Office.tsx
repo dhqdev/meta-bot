@@ -27,6 +27,17 @@ const TABS: Array<[Tab, string]> = [
   ["agent", "Agente"],
 ];
 
+const REVIEW_LABEL: Record<string, string> = { hold: "mantém", adjust: "ajustou", close: "fechou" };
+
+/** Última revisão do Gustavo nesta posição (de hora em hora). */
+function ReviewNote({ review }: { review: { at: string; action: string; text: string } }) {
+  return (
+    <p className="w-full text-[11px] leading-snug text-muted">
+      🔍 Gustavo às {time(review.at)}: <b className="text-slate-300">{REVIEW_LABEL[review.action] ?? review.action}</b> — {review.text}
+    </p>
+  );
+}
+
 export function OfficePage() {
   const live = useLive();
   const [selected, setSelected] = useState<string | undefined>();
@@ -44,7 +55,12 @@ export function OfficePage() {
 
   return (
     <div className="space-y-3">
-      {!live.system.running && (
+      {!live.system.running && live.office.office_break?.until && (
+        <div className="rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+          🌙 <b>Pausa depois da daily:</b> a equipe volta às <b>{time(live.office.office_break.until)}</b>. Ninguém abre posição nova agora; o Caio continua protegendo as posições abertas.
+        </div>
+      )}
+      {!live.system.running && !live.office.office_break?.until && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
           O escritório está <b>fechado</b>: a equipe está no lounge. Toque em <b>Ligar escritório</b> (botão no topo) para os agentes começarem a trabalhar — tudo começa no modo simulado.
         </div>
@@ -77,6 +93,7 @@ export function OfficePage() {
                     <span className={clsx("font-semibold tabular-nums", (t.open_pnl ?? 0) >= 0 ? "text-up" : "text-down")}>
                       {signed(t.open_pnl)} ({signed(t.open_r)}R)
                     </span>
+                    {t.mgmt?.last_review && <ReviewNote review={t.mgmt.last_review} />}
                   </div>
                 ))}
               </div>

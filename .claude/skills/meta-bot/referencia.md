@@ -18,6 +18,7 @@ backend/app/
 │   ├── skills.py        SkillBook (XP/níveis), lições (add_lesson, active_lessons), playbook()
 │   ├── daily.py         DailyMeeting (daily das 19h), report_dict, DAILY_SKILL
 │   ├── infra.py news.py schedule.py strategist.py manager.py risk.py cashier.py auditor.py
+│   ├── review.py        regras da revisão das posições abertas (decide, counterfactual, learn_patience)
 │   └── playbooks/       equipe.md (manual da equipe), manager.md, news.md, daily.md → prompts da IA
 ├── core/
 │   ├── indicators.py strategies.py   indicadores e as 18 estratégias (REGISTRY, get_strategy)
@@ -71,6 +72,9 @@ deploy/mt5-remoto.yml        MT5 em Docker numa máquina Linux Intel/AMD
 | `manager.weights` | Gustavo | confiança em estratégia/hora/notícia/real |
 | `manager.horizon_weights` | Gustavo | peso de scalp/day/swing (0,75–1,25) |
 | `daily.last` / `daily.focus_told` | daily / Gustavo | último dia com daily; dia em que o foco foi lembrado |
+| `office.break` | office (pausa depois da daily) | `{"until": ISO UTC, "started", "minutes"}` ou nulo |
+| `manager.review_patience` | Gustavo (revisão) | paciência aprendida (−0,3 a +0,3): maior = espera mais antes de fechar |
+| `manager.review_stats` / `manager.review_day` | Gustavo → daily | saídas conferidas (acertos/cedo) e contagem do dia (close/sl/tp/hold) |
 | `ai_status` | llm.py | última chamada (ok ou erro) mostrada na tela |
 | `paper_reset_at` | sistema | quando a conta simulada foi zerada |
 | `market.family` | office.sync_data_family | `real` ou `simulado`: origem dos preços com que a equipe aprendeu |
@@ -79,7 +83,7 @@ Segredos (criptografados): `openrouter_api_key` e credenciais de terminais.
 
 ## Eventos do WebSocket (`bus.publish`)
 
-`snapshot` (ao conectar: agents, system, office, activity, messages), `agent` (estado/tarefa), `activity`, `message` (sender, recipient, kind, text), `say` (balão), `meeting` (host, participants, lines, title), `daily` (day, summary, pnl, mood), `office` (dados do painel: risk, plan, account, headline…), `trade`, `levelup`, `account`, `mt5`.
+`snapshot` (ao conectar: agents, system, office, activity, messages), `agent` (estado/tarefa), `activity`, `message` (sender, recipient, kind, text), `say` (balão), `meeting` (host, participants, lines, title), `daily` (day, summary, pnl, mood), `office` (dados do painel: risk, plan, account, headline, office_break…), `trade`, `levelup`, `account`, `mt5`, `system` (running, quando a pausa fecha/reabre ou o dono liga/desliga).
 
 ## API (todas exigem login, menos health e auth)
 
@@ -100,11 +104,11 @@ Segredos (criptografados): `openrouter_api_key` e credenciais de terminais.
 - **Metas do dia:** `daily_loss_limit` + `daily_loss_unit` (percent|money), `daily_profit_target` + `daily_profit_unit`, `close_on_daily_limit`.
 - **Risco (Rita):** `risk_per_trade_pct`, `max_drawdown_pct`, `max_open_positions`, `max_positions_per_symbol`, `max_currency_exposure`, `max_spread_multiplier`, `adaptive_risk`, `min_lot_overrisk`.
 - **Estratégias (Estela):** `watchlist`, `timeframes`, `enabled_strategies`, `rank_by`, `min_trades`, `min_profit_factor`, `oos_fraction`, `ranking_interval_hours`, `evolution_enabled`, `evolution_interval_hours`.
-- **Gerente (Gustavo):** `decision_interval_minutes`, `max_active_setups`, `min_hour_quality`, `use_news_filter`, `news_block_threshold`, `ai_plan_refresh_minutes`.
+- **Gerente (Gustavo):** `decision_interval_minutes`, `max_active_setups`, `min_hour_quality`, `use_news_filter`, `news_block_threshold`, `position_review_minutes` (revisão das posições abertas; 0 = desligada), `ai_plan_refresh_minutes`.
 - **Caixa (Caio):** `break_even_r`, `trailing_start_r`, `trailing_atr_mult`, `adaptive_exits`, `max_bars_in_trade`, `close_before_weekend`, `b3_close_time`, `b3_prefixes`.
 - **Hugo:** `blackout_before_min`, `blackout_after_min`, `blackout_impacts`, `calendar_url`.
 - **Nina:** `news_enabled`, `news_interval_minutes`, `news_feeds`, `ai_news_interval_minutes`.
-- **Daily:** `daily_meeting_enabled`, `daily_meeting_time`.
+- **Daily:** `daily_meeting_enabled`, `daily_meeting_time`, `daily_break_minutes` (escritório fechado depois da daily automática; 0 = sem pausa).
 - **IA:** `ai_enabled`, `ai_max_calls_per_hour`, `ai_daily_budget_usd` (modelos não são configuráveis).
 - **Simulado/MT5:** `paper_initial_balance`, `paper_commission_per_lot`, `paper_slippage_points`, `data_source` (auto | real | mt5 | synthetic), `magic_number`, `deviation_points`, `server_utc_offset_hours`.
 - **Sistema (rotas próprias, com senha):** `system_running`, `mode`.

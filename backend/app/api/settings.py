@@ -39,7 +39,8 @@ FIELD_LABELS = {
     "news_block_threshold": "Força da notícia que veta", "break_even_r": "Zero a zero a partir de",
     "trailing_start_r": "Trailing a partir de", "trailing_atr_mult": "Distância do trailing", "max_bars_in_trade": "Tempo máximo na operação",
     "b3_close_time": "Fechar day trade da B3 às", "blackout_before_min": "Pausa antes do evento", "blackout_after_min": "Pausa depois do evento",
-    "news_interval_minutes": "Ler notícias a cada", "daily_meeting_time": "Horário da daily", "ai_news_interval_minutes": "Notícias pela IA a cada",
+    "news_interval_minutes": "Ler notícias a cada", "daily_meeting_time": "Horário da daily", "daily_break_minutes": "Pausa depois da daily",
+    "position_review_minutes": "Revisar posições abertas a cada", "ai_news_interval_minutes": "Notícias pela IA a cada",
     "ai_plan_refresh_minutes": "Validade do plano da IA", "ai_max_calls_per_hour": "Máximo de chamadas de IA por hora",
     "ai_daily_budget_usd": "Orçamento diário de IA", "paper_initial_balance": "Saldo inicial da conta simulada",
     "paper_commission_per_lot": "Comissão por lote", "paper_slippage_points": "Slippage", "magic_number": "Número mágico",
@@ -114,6 +115,8 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
         office.agent("strategist").request("ranking")
     if {"daily_loss_limit", "daily_loss_unit", "daily_profit_target", "daily_profit_unit"} & set(patch):
         office.agent("risk").request("guard")
+    if "daily_break_minutes" in patch and cfg.daily_break_minutes == 0:
+        office.end_break(reopen=True)  # pausa desligada no meio dela: reabre já
     record_activity("system", f"Configurações alteradas: {', '.join(sorted(patch))}", kind="settings")
     return {"config": cfg.model_dump(mode="json")}
 

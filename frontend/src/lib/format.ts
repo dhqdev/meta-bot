@@ -49,4 +49,7 @@ export const EXIT_LABEL: Record<string, string> = {
   sinal: "sinal",
   "fim de semana": "fim de semana",
   "fim do pregão": "fim do pregão",
+  revisao: "revisão do gerente",
+  "limite do dia": "limite do dia",
+  "meta do dia": "meta do dia",
 };

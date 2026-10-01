@@ -174,6 +174,9 @@ class DailyMeeting:
         risk = self.office.agent("risk").status()
         news_stats = self.office.agent("news").skills.get("sentimento_ativos").get("stats", {})
         prev = self.last_report(before=self.local_now().date().isoformat())
+        reviews = kv_get("manager.review_day") or {}
+        if reviews.get("day") != self.local_now().date().isoformat():
+            reviews = {}
         return {
             "day": self.local_now().date().isoformat(),
             "mode": mode,
@@ -193,6 +196,8 @@ class DailyMeeting:
             "ai_cost_usd": round(ai_cost, 4),
             "xp": {a: int(x) for a, x in xp_rows},
             "horizons": self.office.agent("strategist").horizon_summary(days=30),
+            "reviews": {k: int(reviews.get(k, 0)) for k in ("close", "sl", "tp", "hold")},
+            "review_learning": {**(kv_get("manager.review_stats") or {}), "patience": float(kv_get("manager.review_patience") or 0.0)},
             "previous_focus": (prev or {}).get("focus", []),
             "previous_pnl": (prev or {}).get("pnl"),
         }
@@ -224,6 +229,17 @@ class DailyMeeting:
             manager_bullets.append("Paramos no limite de perda do dia.")
         if data["previous_focus"]:
             manager_bullets.append("Foco de hoje era: " + "; ".join(data["previous_focus"][:3]))
+        rv = data.get("reviews") or {}
+        if sum(rv.values()):
+            manager_bullets.append(
+                f"Revisões das posições abertas: {rv.get('close', 0)} fechada(s) pela revisão, {rv.get('sl', 0)} stop(s) apertado(s), "
+                f"{rv.get('tp', 0)} alvo(s) ajustado(s), {rv.get('hold', 0)} vez(es) mantida(s)."
+            )
+        rl = data.get("review_learning") or {}
+        if rl.get("checked"):
+            manager_bullets.append(
+                f"Saídas da revisão conferidas: {rl.get('good', 0)} acerto(s), {rl.get('early', 0)} cedo demais em {rl['checked']}; paciência em {rl.get('patience', 0.0):+.2f}.".replace(".", ",", 1)
+            )
         horizon_notes = self.office.agent("manager").learn_horizons(data["horizons"])
         for note in horizon_notes:
             adjustments.append({"agent": "manager", "kind": "horizonte", "text": f"Preferência de horizonte ajustada — {note}"})
@@ -234,8 +250,9 @@ class DailyMeeting:
 
         # Tito: dados e conexão
         infra = data["infra"]
+        source_name = {"mt5": "MT5 (corretora)", "real": "preços reais públicos (Yahoo/Binance)"}.get(infra["source"], "mercado simulado")
         section("infra", [
-            f"Dados de {'MT5 (corretora)' if infra['source'] == 'mt5' else 'mercado simulado'}{' com MT5 conectado' if infra['mt5'] else ''}.",
+            f"Dados de {source_name}{' com MT5 conectado' if infra['mt5'] else ''}.",
             f"{infra['errors']} erro(s) registrados hoje." if infra["errors"] else "Nenhum erro técnico hoje.",
             f"IA custou US$ {data['ai_cost_usd']:.3f} hoje." if data["ai_cost_usd"] else "",
         ])
@@ -295,8 +312,10 @@ class DailyMeeting:
                     prof = s.get(StrategyProfile, pid)
                     if prof is not None and prof.status == "aprovada":
                         prof.status = "observacao"
+                        # fica fora do plano amanhã; depois disso a Estela revalida com o histórico mais recente
+                        prof.live = {**(prof.live or {}), "revalidate_after": tomorrow_end, "flagged_by": "daily"}
                         name = REGISTRY[prof.strategy].name if prof.strategy in REGISTRY else prof.strategy
-                        adjustments.append({"agent": "strategist", "kind": "estrategia", "text": f"{name} em {prof.symbol} {prof.timeframe} vai para revalidação ({len(rows)} operações, {_br(r_sum)}R hoje).", "data": {"profile_id": pid}})
+                        adjustments.append({"agent": "strategist", "kind": "estrategia", "text": f"{name} em {prof.symbol} {prof.timeframe} fica fora do plano amanhã e só volta se passar na revalidação ({len(rows)} operações, {_br(r_sum)}R hoje).", "data": {"profile_id": pid}})
                         lessons.append({"agent": "strategist", "text": f"{name} em {prof.symbol} {prof.timeframe} perdeu {len(rows)} vezes no mesmo dia ({_br(r_sum)}R): revalidar antes de voltar ao plano."})
         if data["by_strategy"]:
             top = data["by_strategy"][0]
@@ -361,9 +380,6 @@ class DailyMeeting:
         aurora.append(f"A equipe ganhou {xp_total} XP hoje." if xp_total else "Dia calmo nas skills.")
         section("auditor", aurora)
 
-        # autonomia: quem precisa estudar esta noite já recebe o pedido
-        if any(a["agent"] == "strategist" for a in adjustments):
-            self.office.agent("strategist").request("revalidate")
         return sections, adjustments, lessons
 
     # --------------------------------------------------------- reunião
@@ -419,9 +435,14 @@ class DailyMeeting:
             return None
         self.running = True
         try:
-            return await self._run(force)
+            report = await self._run(force)
         finally:
             self.running = False
+        cfg = get_config()
+        # depois da daily automática, a equipe descansa e o escritório reabre sozinho
+        if not force and cfg.daily_break_minutes > 0 and cfg.system_running:
+            self.office.start_break(cfg.daily_break_minutes)
+        return report
 
     async def _run(self, force: bool) -> dict:
         manager = self.office.agent("manager")
@@ -454,7 +475,7 @@ class DailyMeeting:
             "status": status, "mood": result.mood, "summary": result.summary,
             "transcript": [x.model_dump() for x in result.transcript], "sections": sections, "adjustments": adjustments,
             "lessons": lessons, "focus": result.focus,
-            "metrics": {k: data[k] for k in ("totals", "by_strategy", "by_symbol", "by_horizon", "by_hour_local", "exits", "signals", "risk", "news", "infra", "ai_cost_usd", "xp", "currency", "events")}
+            "metrics": {k: data[k] for k in ("totals", "by_strategy", "by_symbol", "by_horizon", "by_hour_local", "exits", "signals", "risk", "news", "infra", "ai_cost_usd", "xp", "currency", "events", "reviews")}
             | {"horizons": data["horizons"]["horizons"]},
             "ai": ai_data is not None, "model": model if ai_data is not None else "",
         }
@@ -480,6 +501,9 @@ class DailyMeeting:
         bus.publish({"type": "daily", "day": day, "id": report["id"], "summary": report["summary"], "pnl": report["pnl"], "mood": report["mood"]})
         record_activity("manager", f"📋 Daily de {day}: {report['summary']}", kind="daily", data={"day": day, "adjustments": len(adjustments)})
         manager.tell("all", "✅ Daily concluída. Relatório na aba Daily; amanhã a gente aplica o que aprendeu.", kind="daily")
+        # o próximo plano já considera as lições e os ajustes (não reaproveita o plano antigo da IA)
+        manager._ai_cache = None
+        manager.request("decide")
         return report
 
     # ------------------------------------------------------------ consulta

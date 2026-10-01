@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { LineChart } from "../components/Charts";
 import { Badge, Button, Card, Empty, Loading, Select, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { dateTime, DIRECTION_LABEL, EXIT_LABEL, money, num, pct, signed } from "../lib/format";
+import { dateTime, DIRECTION_LABEL, EXIT_LABEL, money, num, pct, signed, time } from "../lib/format";
 import { useLive } from "../lib/live";
 
 const SIGNAL_TONE: Record<string, "green" | "red" | "gold" | "slate" | "blue"> = { executado: "green", vetado: "red", falhou: "red", aguardando: "gold", expirado: "slate", aprovado: "blue", proposto: "slate", cancelado: "slate" };
@@ -64,38 +64,49 @@ export function TradesPage() {
               </thead>
               <tbody>
                 {open.data.map((t) => (
-                  <tr key={t.id} className="border-b border-line/60">
-                    <td className="px-3 py-2">
-                      <b>{t.symbol}</b> <span className="text-xs text-muted">{t.strategy_name} · {t.timeframe} · {t.mode === "live" ? "MT5" : "sim."}</span>
-                    </td>
-                    <td className="px-2">
-                      <Badge tone={t.direction === "buy" ? "green" : "red"}>{t.direction === "buy" ? "compra" : "venda"}</Badge>
-                      {t.mgmt?.be && <Badge tone="blue">0×0</Badge>}
-                      {t.mgmt?.trailing && <Badge tone="purple">trailing</Badge>}
-                    </td>
-                    <td className="px-2 text-right tabular-nums">{t.volume}</td>
-                    <td className="px-2 text-right tabular-nums">{num(t.entry_price, 5)}</td>
-                    <td className="px-2 text-right tabular-nums">{num(t.price, 5)}</td>
-                    <td className="px-2 text-right tabular-nums text-down">{num(t.sl, 5)}</td>
-                    <td className="px-2 text-right tabular-nums text-up">{num(t.tp, 5)}</td>
-                    <td className={clsx("px-2 text-right tabular-nums font-semibold", (t.open_pnl ?? 0) >= 0 ? "text-up" : "text-down")}>
-                      {signed(t.open_pnl)} <span className="text-xs">({signed(t.open_r)}R)</span>
-                    </td>
-                    <td className="px-3 text-right">
-                      <Button
-                        variant="ghost"
-                        className="px-2 py-1 text-xs"
-                        onClick={async () => {
-                          if (confirm(`Fechar ${t.symbol} agora a mercado?`)) {
-                            await api.post(`/api/trades/${t.id}/close`);
-                            void open.refetch();
-                          }
-                        }}
-                      >
-                        Fechar
-                      </Button>
-                    </td>
-                  </tr>
+                  <Fragment key={t.id}>
+                    <tr className={clsx(!t.mgmt?.last_review && "border-b border-line/60")}>
+                      <td className="px-3 py-2">
+                        <b>{t.symbol}</b> <span className="text-xs text-muted">{t.strategy_name} · {t.timeframe} · {t.mode === "live" ? "MT5" : "sim."}</span>
+                      </td>
+                      <td className="px-2">
+                        <Badge tone={t.direction === "buy" ? "green" : "red"}>{t.direction === "buy" ? "compra" : "venda"}</Badge>
+                        {t.mgmt?.be && <Badge tone="blue">0×0</Badge>}
+                        {t.mgmt?.trailing && <Badge tone="purple">trailing</Badge>}
+                      </td>
+                      <td className="px-2 text-right tabular-nums">{t.volume}</td>
+                      <td className="px-2 text-right tabular-nums">{num(t.entry_price, 5)}</td>
+                      <td className="px-2 text-right tabular-nums">{num(t.price, 5)}</td>
+                      <td className="px-2 text-right tabular-nums text-down">{num(t.sl, 5)}</td>
+                      <td className="px-2 text-right tabular-nums text-up">{num(t.tp, 5)}</td>
+                      <td className={clsx("px-2 text-right tabular-nums font-semibold", (t.open_pnl ?? 0) >= 0 ? "text-up" : "text-down")}>
+                        {signed(t.open_pnl)} <span className="text-xs">({signed(t.open_r)}R)</span>
+                      </td>
+                      <td className="px-3 text-right">
+                        <Button
+                          variant="ghost"
+                          className="px-2 py-1 text-xs"
+                          onClick={async () => {
+                            if (confirm(`Fechar ${t.symbol} agora a mercado?`)) {
+                              await api.post(`/api/trades/${t.id}/close`);
+                              void open.refetch();
+                            }
+                          }}
+                        >
+                          Fechar
+                        </Button>
+                      </td>
+                    </tr>
+                    {t.mgmt?.last_review && (
+                      <tr className="border-b border-line/60">
+                        <td colSpan={9} className="px-3 pb-2 text-[11px] leading-snug text-muted">
+                          <p className="sticky left-3 max-w-[min(42rem,calc(100vw-4rem))] whitespace-normal">
+                            🔍 Revisão do Gustavo às {time(t.mgmt.last_review.at)}: {t.mgmt.last_review.text}
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

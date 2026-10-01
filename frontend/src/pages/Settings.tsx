@@ -113,6 +113,7 @@ const SECTIONS: Section[] = [
     fields: [
       { key: "max_active_setups", label: "Setups ativos ao mesmo tempo", int: true, min: 1, max: 10, hint: "Quantas combinações ativo + estratégia podem gerar entradas ao mesmo tempo (no máximo uma por ativo)." },
       { key: "decision_interval_minutes", label: "Rever o plano a cada", int: true, min: 1, max: 240, suffix: "min", hint: "De quanto em quanto tempo o Gustavo reavalia quais setups ficam ativos." },
+      { key: "position_review_minutes", label: "Revisar posições abertas a cada", int: true, min: 0, max: 720, suffix: "min", hint: "O Gustavo olha cada posição aberta com o mercado de agora: fecha se o motivo da entrada sumiu (evento forte chegando, notícia contra, operação parada ou devolvendo o lucro), aperta o stop para garantir lucro (nunca afrouxa) e estica ou aproxima o alvo. 0 = não revisa." },
       { key: "min_hour_quality", label: "Qualidade mínima do horário", min: 0, max: 1, hint: "O Hugo dá nota de 0 a 1 para cada hora de cada ativo (volume e movimento). Abaixo desta nota o setup fica bloqueado. 0 = opera em qualquer hora." },
       { key: "use_news_filter", label: "Usar as notícias da Nina", type: "switch", hint: "Notícias fortes definem a direção (só compra ou só venda) e vetam entradas contra elas." },
       { key: "news_block_threshold", label: "Força da notícia que veta", min: 0.1, max: 1, hint: "Quão forte (0 a 1) a notícia precisa ser para vetar uma entrada contrária. Menor = veta mais vezes." },
@@ -517,6 +518,7 @@ const SIMPLE_FIELDS: Record<string, FieldDef> = {
   max_drawdown_pct: { key: "max_drawdown_pct", label: "Trava geral: queda máxima desde o pico", min: 2, max: 50, suffix: "%", hint: "Se o patrimônio cair isso desde o maior valor já atingido, tudo para até você liberar (pede senha)." },
   daily_meeting_enabled: { key: "daily_meeting_enabled", label: "Daily automática", type: "switch", hint: "A equipe se reúne todo dia no horário abaixo (se trabalhou no dia), escreve o relatório e aplica os aprendizados no dia seguinte." },
   daily_meeting_time: { key: "daily_meeting_time", label: "Horário da daily (Brasília)", type: "time", hint: "Depois do fechamento dos mercados do dia é o ideal." },
+  daily_break_minutes: { key: "daily_break_minutes", label: "Pausa depois da daily", int: true, min: 0, max: 720, suffix: "min", hint: "Depois da daily do horário, o escritório fecha por esse tempo (ninguém abre posição nova; o Caio continua protegendo as abertas) e reabre sozinho. 0 = sem pausa." },
   ai_enabled: { key: "ai_enabled", label: "IA ligada", type: "switch", hint: "Desligada, os agentes seguem só com as regras (funciona igual, sem custo)." },
   ai_daily_budget_usd: { key: "ai_daily_budget_usd", label: "Orçamento diário", min: 0, max: 1000, suffix: "US$/dia", hint: "Teto de gasto com IA por dia. Passou, os agentes seguem só com as regras até amanhã. 0 = sem teto." },
   ai_max_calls_per_hour: { key: "ai_max_calls_per_hour", label: "Máximo de chamadas por hora", int: true, min: 0, max: 500, hint: "Segurança extra contra gasto inesperado." },
@@ -580,8 +582,9 @@ function DailyCard({ cfg, set }: { cfg: Cfg; set: Setter }) {
       <div className="space-y-3">
         <FieldControl f={SIMPLE_FIELDS.daily_meeting_enabled} cfg={cfg} set={set} defaults={defaults} />
         <FieldControl f={SIMPLE_FIELDS.daily_meeting_time} cfg={cfg} set={set} defaults={defaults} />
+        <FieldControl f={SIMPLE_FIELDS.daily_break_minutes} cfg={cfg} set={set} defaults={defaults} />
         <p className="text-[11px] leading-snug text-muted">
-          Na daily cada agente avalia a sua parte e decidem ajustes seguros para amanhã: horários a evitar, estratégias para revalidar, preferência entre scalper e posição longa e o risco da Rita (que só diminui ou volta ao normal, nunca aumenta sozinho).
+          Na daily cada agente avalia a sua parte e decidem ajustes seguros para amanhã: horários a evitar, estratégias que ficam fora do plano até passarem na revalidação, preferência entre scalper e posição longa e o risco da Rita (que só diminui ou volta ao normal, nunca aumenta sozinho).
         </p>
       </div>
     </Card>

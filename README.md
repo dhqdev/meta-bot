@@ -7,7 +7,8 @@
 - **Conta simulada com preços reais, sem corretora**: forex, ouro, índices e B3 pelo Yahoo Finance e cripto pela Binance, de graça. Funciona como uma conta de verdade, só que sem risco.
 - **Objetivo: terminar o dia no lucro.** Você define o **limite de perda do dia** e a **meta de ganho**; bateu um dos dois, a equipe para até amanhã.
 - **Agentes com personalidade**: notícias, horários e calendário, estratégias, gerente, risco, caixa, auditoria e TI, cada um com seu jeito de falar. A **conversa da equipe** aparece ao vivo no escritório.
-- **Daily às 19h**: a equipe se reúne, avalia o dia, escreve um relatório (aba **Daily**) e aplica os aprendizados no dia seguinte.
+- **Daily às 19h**: a equipe se reúne, avalia o dia, escreve um relatório (aba **Daily**) e aplica os aprendizados no dia seguinte. Depois, o escritório fecha **1 hora** para descanso e reabre sozinho.
+- **Gerente de olho nas posições**: de hora em hora o Gustavo revisa cada posição aberta com o mercado de agora — fecha quando o motivo da entrada sumiu, aperta o stop para garantir lucro e ajusta o alvo — e aprende conferindo o que teria acontecido.
 - **Scalper ou segurar mais tempo?** A equipe testa os dois estilos e passa a preferir o que dá mais resultado.
 - **Estratégias testadas de verdade**: 18 setups (Vilela One, IndicatorSpot, setups brasileiros e clássicos), backtest com custos e validação fora da amostra.
 - **IA econômica e sem configuração**: só a chave do OpenRouter; cada agente já tem o seu modelo definido. Sem chave, tudo funciona só com regras.
@@ -51,7 +52,7 @@
 | **Nina** | Notícias | a repórter curiosa | **sim** | Lê RSS de FXStreet, Investing, CNBC, MarketWatch, Yahoo, CoinDesk, InfoMoney, Money Times e Investing Brasil. Classifica impacto e sentimento por ativo, avisa o gerente das notícias fortes e depois confere se acertou a direção, dando mais peso às fontes que acertam. |
 | **Hugo** | Horários e Calendário | o relógio da equipe | não | Mapeia os melhores horários de cada ativo, acompanha o calendário econômico (Forex Factory), avisa a equipe antes dos eventos fortes e pausa as entradas nos ativos afetados. |
 | **Estela** | Estrategista | a cientista cética | não | Roda os backtests de todas as estratégias em cada ativo e tempo gráfico, aprova só o que se sustenta fora da amostra, evolui os parâmetros (inclusive versões scalper e de segurar mais tempo) e gera os sinais. |
-| **Gustavo** | Gerente | o líder calmo | **sim** | Junta tudo (backtest, hora, notícias, calendário, resultado real, risco e o foco da daily) e decide **qual ativo, qual estratégia e em qual horário** a mesa opera. Aprova ou recusa cada sinal, conduz as reuniões e a daily e aprende quanto confiar em cada colega. |
+| **Gustavo** | Gerente | o líder calmo | **sim** | Junta tudo (backtest, hora, notícias, calendário, resultado real, risco e o foco da daily) e decide **qual ativo, qual estratégia e em qual horário** a mesa opera. Aprova ou recusa cada sinal, **revisa as posições abertas de hora em hora** (fechar, apertar o stop, mudar o alvo), conduz as reuniões e a daily e aprende quanto confiar em cada colega. |
 | **Rita** | Risco | a guardiã do caixa | não | Calcula o lote pelo risco por operação, controla posições, exposição por moeda e spread, **encerra o dia na meta ou no limite de perda** e tem a trava geral. Fica mais conservadora depois de perdas. |
 | **Caio** | Caixa | o executor disciplinado | não | Envia as ordens com **stop loss e stop gain**, faz zero a zero, trailing, saída por tempo, fecha antes do fim de semana e antes do fechamento da B3. |
 | **Aurora** | Auditoria | a mentora sábia | **sim** (daily) | Compara o resultado real com o backtest, põe em observação o que decepciona, distribui XP e registra as lições da daily que a equipe passa a seguir. |
@@ -78,7 +79,18 @@ flowchart LR
 1. A cada 15 minutos o **Gustavo** monta o plano com até 3 setups (ativo + tempo gráfico + estratégia + direção). Com IA, ele escolhe entre candidatos que as regras já filtraram; sem IA, usa a pontuação da equipe.
 2. Quando fecha um candle, a **Estela** confere os sinais dos setups do plano e manda para o Gustavo.
 3. O **Gustavo** revisa o sinal contra notícias e calendário e pede o lote à **Rita**; ela confere os limites e passa o lote ao **Caio**, que executa com stop e alvo.
-4. Quando a operação fecha, a **Aurora** atualiza as estatísticas reais, distribui XP e o Gustavo ajusta a confiança em cada colega.
+4. Com a posição aberta, o **Caio** cuida do básico a cada 5 segundos (stop, alvo, zero a zero, trailing e saída por tempo) e o **Gustavo** faz uma revisão de hora em hora (veja abaixo).
+5. Quando a operação fecha, a **Aurora** atualiza as estatísticas reais, distribui XP e o Gustavo ajusta a confiança em cada colega.
+
+### Revisão das posições abertas (de hora em hora)
+
+O Gustavo olha cada posição aberta com o mercado de agora (tendência, ADX, volatilidade, notícias, calendário, situação da estratégia e tempo em posição) e pede ao Caio:
+
+- **Fechar** quando o motivo da entrada sumiu: evento forte chegando com lucro na mão, notícias fortes contra, estratégia que saiu do plano, operação **devolvendo o lucro** (chegou a +1,2R e voltou para menos da metade sem tendência a favor) ou **parada sem andar** por muito tempo (metade do tempo máximo, ou o dobro do tempo normal daquela estratégia no backtest).
+- **Apertar o stop** — nunca afrouxar: garante +0,5R a partir de +1,5R (e mais conforme sobe), corta pela metade o risco que falta quando o contexto piora e aproxima o stop quando a volatilidade cai.
+- **Mudar o alvo**: estica +1R quando a tendência está forte perto do alvo (até 4R, protegendo o lucro) ou traz o alvo para perto quando o movimento perdeu força numa operação que já passou do tempo normal.
+
+A decisão aparece na posição (telas **Escritório** e **Operações**) e na conversa da equipe; a saída fica registrada como *revisão do gerente*. **Aprendizado:** 12 candles depois de cada fechamento pela revisão, o Gustavo confere o que teria acontecido se tivesse segurado: se saiu cedo demais, fica mais paciente; se a saída evitou prejuízo, fica mais rápido (com limite). O intervalo é ajustável em **Config. → Gustavo** (0 = não revisa) e o botão *revisar posições* na tela **Agentes** pede uma revisão na hora.
 
 Cada passo é uma **mensagem da equipe** (pedido → resposta), que aparece na aba **Conversa** do escritório e como um envelope voando de uma mesa para a outra. Avisos para todo mundo (evento chegando, meta batida, MT5 caiu) aparecem como uma onda saindo de quem falou.
 
@@ -125,14 +137,17 @@ Todo dia às **19h** (horário de Brasília, ajustável), se a equipe trabalhou,
 1. **Números do dia**: operações, resultado, acerto, estratégias, ativos, horários, estilo (scalper × day trade × posição longa), saídas, sinais vetados, notícias, eventos e metas.
 2. **Cada agente avalia a sua área** e decide **ajustes para amanhã**, sempre com limite:
    - Hugo: horário que deu prejuízo hoje fica evitado amanhã (no ativo ou em todos);
-   - Estela: estratégia que perdeu várias vezes no dia vai para revalidação;
+   - Estela: estratégia que perdeu várias vezes no dia **fica fora do plano amanhã**; depois disso só volta se passar na revalidação (backtest com o histórico atualizado **e** as operações mais recentes do teste no positivo). Reprovada, fica bloqueada por 3 dias;
    - Gustavo: recalibra a preferência entre scalper, day trade e posição longa;
    - Rita: depois de um dia no limite de perda, começa amanhã com menos risco (e recupera aos poucos com dias positivos);
    - Caio: muitas saídas por tempo → revisa a gestão de saída à noite.
 3. **A reunião**: com IA, cada agente fala no seu jeito, com os números do dia; sem IA, as falas saem das próprias análises.
-4. **Relatório** na aba **Daily**: resumo, falas, foco de amanhã, ajustes, lições e números. As lições entram no prompt dos agentes, e o Gustavo lembra a equipe do foco na manhã seguinte. Cada daily dá XP na skill *Aprendizado da daily*.
+4. **Relatório** na aba **Daily**: resumo, falas, foco de amanhã, ajustes, lições e números (inclusive as revisões de posição do Gustavo). As lições de todos entram no prompt da IA do Gustavo (é ele quem aplica as lições da Estela, da Rita e do Hugo, que não usam IA), o próximo plano já é montado com elas e o Gustavo lembra a equipe do foco na manhã seguinte. Cada daily dá XP na skill *Aprendizado da daily*.
+5. **Pausa**: depois da daily do horário, o escritório fecha por **1 hora** (ajustável em **Config. → Daily da equipe**; 0 = sem pausa). Ninguém abre posição nova e as ordens armadas são canceladas; o Caio continua protegendo as posições abertas. Na hora marcada o escritório reabre sozinho. Ligar ou desligar pelo botão do topo encerra a pausa.
 
-Dá para fazer a daily a qualquer hora pelo botão **Fazer a daily agora**.
+Os efeitos de um dia no outro (horário evitado, estratégia fora do plano até revalidar, lote menor, lições no plano da IA, foco da manhã) são conferidos pelo teste `backend/tests/test_next_day.py`.
+
+Dá para fazer a daily a qualquer hora pelo botão **Fazer a daily agora** (essa não fecha o escritório).
 
 ## Scalper × day trade × posição longa
 
@@ -339,7 +354,7 @@ meta-bot/
 │   ├── app/services/        IA (OpenRouter), feeds de notícias e calendário
 │   ├── app/api/             rotas REST + WebSocket
 │   ├── scripts/             verificar_sistema.py: escritório inteiro com preços reais (precisa de internet)
-│   └── tests/               138 testes
+│   └── tests/               151 testes
 ├── frontend/                React + Vite + Tailwind; escritório em canvas (pixel-art gerada no código)
 │   ├── src/office/          mapa, sprites, pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
 │   ├── public/              manifesto, service worker e ícones do app (PWA)
@@ -370,13 +385,13 @@ API (todas exigem login, exceto `/api/health` e `/api/auth/status|setup|login`):
 ## Testes e CI
 
 ```bash
-cd backend && python -m pytest -q          # 138 testes
+cd backend && python -m pytest -q          # 151 testes
 cd backend && python scripts/verificar_sistema.py --minutos 5   # preços reais + agentes (precisa de internet)
 cd frontend && npm run build               # typecheck + build
 BASE_URL=http://127.0.0.1:4173 node frontend/e2e/smoke.mjs   # com backend e "npm run preview" no ar
 ```
 
-Os testes cobrem: estratégias sem olhar o futuro, backtest (custos, stops, ordens stop), métricas e tempo em posição, evolução (variantes scalper e de segurar mais), risco e lote, **metas do dia** (limite, meta, fechamento e virada do dia), **daily** (relatório, ajustes, lições, foco da manhã, com e sem IA), preferência de estilo, **efeito de cada configuração**, bridge do MT5 (com um MT5 falso), API (login, 2FA, CSRF, modo real, mensagens de erro), agentes, feeds, a camada de IA (OpenRouter com respostas simuladas) e os **preços reais** (Yahoo e Binance com respostas no formato das APIs: histórico, atualização incremental, cotação, mercado fechado, reserva quando uma fonte cai, troca de origem). O teste de ponta a ponta abre todas as telas, faz uma daily, confere a conversa, o PWA e o layout no celular. O CI roda tudo isso e publica as imagens. O workflow **Verificação com preços reais** ([`.github/workflows/verificacao.yml`](.github/workflows/verificacao.yml)) liga o escritório inteiro com preços de verdade, notícias e calendário por alguns minutos, faz a daily e mostra o relatório de cada agente.
+Os testes cobrem: estratégias sem olhar o futuro, backtest (custos, stops, ordens stop), métricas e tempo em posição, evolução (variantes scalper e de segurar mais), risco e lote, **metas do dia** (limite, meta, fechamento e virada do dia), **daily** (relatório, ajustes, lições, foco da manhã, com e sem IA) e **o efeito dela no dia seguinte**, a **pausa depois da daily**, a **revisão das posições abertas** (regras, ajustes pelo Caio, fechamento e aprendizado), preferência de estilo, **efeito de cada configuração**, bridge do MT5 (com um MT5 falso), API (login, 2FA, CSRF, modo real, mensagens de erro), agentes, feeds, a camada de IA (OpenRouter com respostas simuladas) e os **preços reais** (Yahoo e Binance com respostas no formato das APIs: histórico, atualização incremental, cotação, mercado fechado, reserva quando uma fonte cai, troca de origem). O teste de ponta a ponta abre todas as telas, faz uma daily, confere a conversa, o PWA e o layout no celular. O CI roda tudo isso e publica as imagens. O workflow **Verificação com preços reais** ([`.github/workflows/verificacao.yml`](.github/workflows/verificacao.yml)) liga o escritório inteiro com preços de verdade, notícias e calendário por alguns minutos, faz a daily e mostra o relatório de cada agente.
 
 ## Skill para o Claude Code
 

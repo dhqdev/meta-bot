@@ -116,6 +116,10 @@ LINES: dict[str, dict[str, list[str]]] = {
         "day_stop_target": ["Meta do dia batida! Encerramos por hoje. Bom trabalho, equipe!", "Batemos a meta. Dia encerrado com lucro."],
         "day_stop_loss": ["Limite do dia atingido. Paramos aqui e voltamos amanhã melhores.", "Dia encerrado no limite. Amanhã a gente corrige."],
         "focus": ["Foco de hoje: {focus}", "Lembrando a daily de ontem: {focus}"],
+        "review_close": ["Caio, fecha {symbol} agora ({r}): {why}.", "Revisão de {symbol}: melhor sair com {r}. {why}."],
+        "review_sl": ["Caio, sobe o stop de {symbol} para {sl}: {why}.", "Revisão de {symbol}: stop para {sl}. {why}."],
+        "review_tp": ["Caio, alvo de {symbol} para {tp}: {why}.", "Revisão de {symbol}: novo alvo {tp}. {why}."],
+        "review_hold": ["{symbol} segue como está ({r}): {why}.", "Revisei {symbol}: mantém ({r}). {why}."],
     },
     "risk": {
         "start": ["Segurança primeiro. Limites conferidos.", "Caixa protegido. Pode começar."],
@@ -133,6 +137,8 @@ LINES: dict[str, dict[str, list[str]]] = {
         "closed_loss": ["{symbol} fechado: {pnl}. Stop respeitado.", "Perda contida em {symbol}: {pnl}."],
         "close_all": ["Entendido, Rita. Encerrando {n} posição(ões).", "Fechando tudo, Rita."],
         "be": ["Stop no zero a zero em {symbol}.", "{symbol} protegido no zero a zero."],
+        "review_done": ["Feito, Gustavo: {what} em {symbol}.", "Pronto: {what} em {symbol}."],
+        "review_fail": ["Não deu em {symbol}, Gustavo: {why}.", "Corretora recusou em {symbol}: {why}."],
     },
     "auditor": {
         "start": ["Caderno aberto. Vou acompanhar tudo.", "Pronta para aprender com o dia."],

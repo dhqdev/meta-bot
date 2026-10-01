@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -80,6 +81,23 @@ class CashierAgent(Agent):
         super().__init__(office)
         self._pending: dict[int, dict] = {}
         self._last_trail_log: dict[int, float] = {}
+        # uma mudança por vez em cada posição (o Caio a cada 5 s e a revisão do Gustavo)
+        self._locks: dict[int, asyncio.Lock] = {}
+
+    def trade_lock(self, trade_id: int) -> asyncio.Lock:
+        lock = self._locks.get(trade_id)
+        if lock is None:
+            lock = self._locks[trade_id] = asyncio.Lock()
+        return lock
+
+    @staticmethod
+    def _fresh(trade_id: int) -> Trade | None:
+        with session_scope() as s:
+            tr = s.get(Trade, trade_id)
+            if tr is None or tr.status != "open":
+                return None
+            s.expunge(tr)
+            return tr
 
     async def on_system_change(self, running: bool) -> None:
         if running:
@@ -240,7 +258,10 @@ class CashierAgent(Agent):
                     if tr.ticket not in live_tickets:
                         await self._sync_closed_live(tr)
                         continue
-                await self._manage(tr)
+                async with self.trade_lock(tr.id):
+                    fresh = self._fresh(tr.id)
+                    if fresh is not None:
+                        await self._manage(fresh)
             except Exception as exc:
                 self.log(f"Falha ao acompanhar a operação #{tr.id} ({tr.symbol}): {exc}", kind="order", level="warning")
 
@@ -358,12 +379,87 @@ class CashierAgent(Agent):
         return closed
 
     async def request_close(self, trade_id: int, reason: str) -> bool:
-        with session_scope() as s:
-            tr = s.get(Trade, trade_id)
-            if tr is None or tr.status != "open":
+        async with self.trade_lock(trade_id):
+            tr = self._fresh(trade_id)
+            if tr is None:
                 return False
-            s.expunge(tr)
-        return await self._close(tr, reason)
+            return await self._close(tr, reason)
+
+    # ------------------------------------------------------ revisão (Gustavo)
+    @staticmethod
+    def _push_review(mg: dict, entry: dict) -> dict:
+        mg = dict(mg)
+        mg["reviews"] = [*(mg.get("reviews") or []), entry][-8:]
+        mg["last_review"] = entry
+        return mg
+
+    async def note_review(self, trade_id: int, entry: dict, extra: dict | None = None) -> None:
+        """Guarda na posição o que o Gustavo decidiu na revisão (aparece na tela de Operações)."""
+        async with self.trade_lock(trade_id):
+            with session_scope() as s:
+                row = s.get(Trade, trade_id)
+                if row is None or row.status != "open":
+                    return
+                row.mgmt = {**self._push_review(row.mgmt or {}, entry), **(extra or {})}
+                data = trade_dict(row)
+        bus.publish({"type": "trade", "event": "updated", "trade": data})
+
+    async def adjust(self, trade_id: int, sl: float | None = None, tp: float | None = None, why: str = "", entry: dict | None = None) -> tuple[bool, str]:
+        """Muda stop e/ou alvo de uma posição aberta. O stop só pode ser apertado, nunca afrouxado."""
+        async with self.trade_lock(trade_id):
+            tr = self._fresh(trade_id)
+            if tr is None:
+                return False, "a posição já foi encerrada"
+            try:
+                spec = await self.office.market.spec(tr.symbol)
+                tick = await self.office.market.tick(tr.symbol)
+            except Exception as exc:
+                return False, f"sem cotação: {exc}"
+            d = 1 if tr.direction == "buy" else -1
+            price = tick["bid"] if d > 0 else tick["ask"]
+            digits = int(spec.get("digits", 5))
+            gap = max(2 * (tick["ask"] - tick["bid"]), 5 * float(spec.get("point") or 0))
+            new_sl, new_tp = tr.sl, tr.tp
+            if sl is not None:
+                sl = round(sl, digits)
+                if tr.sl is not None and (sl - tr.sl) * d <= 0:
+                    return False, "o stop só pode ser apertado"
+                if (price - sl) * d < gap:
+                    return False, "stop colado no preço"
+                new_sl = sl
+            if tp is not None:
+                tp = round(tp, digits)
+                if (tp - price) * d < gap:
+                    return False, "alvo atrás do preço"
+                new_tp = tp
+            if new_sl == tr.sl and new_tp == tr.tp:
+                return False, "nada mudou"
+            res = await self.broker_for(tr.mode).modify(tr, new_sl, new_tp)
+            if not res.ok:
+                return False, res.message or "a corretora recusou"
+            risk_px = abs(tr.entry_price - (tr.initial_sl or tr.entry_price))
+            with session_scope() as s:
+                row = s.get(Trade, trade_id)
+                mg = dict(row.mgmt or {})
+                if new_sl is not None and risk_px > 0:
+                    locked = (new_sl - tr.entry_price) * d / risk_px
+                    if locked >= 0:
+                        mg["be"] = True  # se o stop for tocado, a saída é no zero a zero ou no lucro
+                    if locked >= 0.5:
+                        mg["trailing"] = True
+                if entry:
+                    mg = self._push_review(mg, entry)
+                row.sl, row.tp, row.mgmt = new_sl, new_tp, mg
+                data = trade_dict(row)
+        bus.publish({"type": "trade", "event": "updated", "trade": data})
+        parts = []
+        if new_sl != tr.sl:
+            parts.append(f"stop {tr.sl:g} → {new_sl:g}" if tr.sl is not None else f"stop {new_sl:g}")
+        if new_tp != tr.tp:
+            parts.append(f"alvo {tr.tp:g} → {new_tp:g}" if tr.tp is not None else f"alvo {new_tp:g}")
+        self.log(f"Revisão do Gustavo em {tr.symbol}: {', '.join(parts)}. {why}".strip(), kind="order")
+        self.skills.gain("protecao", 2, f"ajuste da revisão em {tr.symbol}")
+        return True, ", ".join(parts)
 
     async def _close(self, tr: Trade, reason: str, price: float | None = None) -> bool:
         broker = self.broker_for(tr.mode)
@@ -428,6 +524,7 @@ class CashierAgent(Agent):
         if reason in ("be", "trailing") and data["pnl_r"] > -0.1:
             self.skills.gain("gestao_saida", 4, f"saída protegida em {data['symbol']}")
         self.idle("Acompanhando as posições")
+        self._locks.pop(trade_id, None)
         self.office.on_trade_closed(tr)
 
     # ----------------------------------------------------------- patrimônio

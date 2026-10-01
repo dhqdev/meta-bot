@@ -30,7 +30,8 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 2. Estela vê o sinal num setup do plano → `office.submit_signal` (pipeline com lock).
 3. `manager.review_signal` (plano, direção, evento, notícias fortes) → `risk.evaluate` (meta do dia, trava, posições, exposição, spread, lote) → `cashier` executa.
 4. Cada passo vira **mensagem da equipe** (`agent.tell(to, text, kind)`): pedido → resposta, visível na aba Conversa e como envelope voando no escritório.
-5. Na saída, Aurora audita, a skill ganha XP e o Gustavo ajusta a confiança em cada colega.
+5. Posição aberta: o Caio cuida do básico a cada 5 s (`cashier._manage`: stop/alvo no simulado, zero a zero, trailing, tempo, fim de semana, B3). De hora em hora (`position_review_minutes`) o Gustavo roda `manager.review_positions()`: monta o `PositionContext` e as regras de `app/agents/review.py` decidem fechar (`exit_reason="revisao"`), apertar o stop (nunca afrouxa; `cashier.adjust` recusa) ou mudar o alvo. Tudo passa pelo Caio com trava por posição (`cashier.trade_lock`). 12 candles depois de um fechamento pela revisão, `check_review_outcomes()` confere o contrafactual e ajusta `manager.review_patience` (−0,3 a +0,3).
+6. Na saída, Aurora audita, a skill ganha XP e o Gustavo ajusta a confiança em cada colega.
 
 ## Regras que não se quebram
 
@@ -44,6 +45,10 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 ## Daily (19h, horário de Brasília)
 
 `backend/app/agents/daily.py` → `DailyMeeting`. `office.daily_loop` checa `due()` a cada 30 s (uma vez por dia, se a equipe trabalhou). Passos: `collect()` (números do dia) → `analyze()` (cada agente avalia sua área e decide **ajustes para amanhã** por regra) → `deterministic()` ou `with_ai()` (falas no jeito de cada um, resumo, lições, foco) → salva `DailyReport`, lições (`source="daily"`), XP na skill `aprendizado_daily`, reunião no escritório e evento `daily`. Na manhã seguinte `manager.morning_focus()` lembra o foco. A IA da daily recebe `playbooks/daily.md` + `playbooks/equipe.md` + personalidades + lições.
+
+O que muda no dia seguinte (provado em `tests/test_next_day.py`): hora evitada bloqueia candidato; estratégia em `observacao` com `live.revalidate_after` (daily: até amanhã 23:59; Aurora: +24 h) fica fora do plano e `strategist.revalidate_flagged` só revalida depois disso, exigindo backtest aprovado **e** as `RECENT_TRADES` operações mais recentes do teste no positivo (reprovada → `live.blocked_until` +3 dias, respeitado pelo ranking); `adaptive_mult` menor = lote menor; **todas** as lições ativas entram no prompt do plano da IA do Gustavo (`active_lessons(None)`), o cache do plano da IA é descartado depois da daily; foco lembrado de manhã.
+
+**Pausa depois da daily:** só na daily automática (`run(force=False)`) e com o sistema ligado, `office.start_break(daily_break_minutes)` desliga `system_running`, cancela ordens stop armadas, guarda `office.break` no kv e publica `office_break`; `daily_loop` chama `check_break()` a cada 30 s e reabre sozinho. `POST /api/system/running` encerra a pausa sem reabrir (vale a escolha do dono).
 
 ## Personalidades e conversa
 
@@ -61,7 +66,7 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 
 ```bash
 # backend (venv com requirements-dev.txt)
-cd backend && python -m pytest -q                      # ~138 testes, SQLite temporário, sem rede
+cd backend && python -m pytest -q                      # ~151 testes, SQLite temporário, sem rede
 cd backend && python scripts/verificar_sistema.py --minutos 5   # escritório com preços reais (precisa de internet)
 MB_ADMIN_EMAIL=voce@exemplo.com MB_ADMIN_PASSWORD=UmaSenhaForte123 uvicorn app.main:app --reload
 

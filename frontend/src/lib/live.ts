@@ -80,6 +80,9 @@ function onMessage(ev: Record<string, any>) {
     case "mt5":
       set({ system: { ...state.system, mt5: ev, data_source: ev.source ?? state.system.data_source } });
       break;
+    case "system":
+      set({ system: { ...state.system, running: ev.running } });
+      break;
     case "account":
       set({ office: { ...state.office, account: ev } });
       break;

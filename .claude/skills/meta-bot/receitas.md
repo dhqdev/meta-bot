@@ -26,7 +26,7 @@ Passo a passo das mudanças mais comuns. Sempre termine com: testes do backend, 
 
 1. Em `DailyMeeting.analyze()` (`backend/app/agents/daily.py`), na seção do agente responsável: calcule a partir de `data` (números do dia), aplique o ajuste **com limite** e registre `adjustments.append({"agent": ..., "kind": ..., "text": ...})` e, se for lição, `lessons.append(...)`.
 2. Guarde o estado em kv com validade (ex.: `until` em ISO UTC) e faça o agente que usa o ajuste respeitá-lo (ex.: `manager.build_candidates` lê `team.avoid_hours`).
-3. Nunca aumente risco; prefira reduzir, pausar ou revalidar. Teste em `tests/test_daily.py`.
+3. Nunca aumente risco; prefira reduzir, pausar ou revalidar. Se o ajuste tira algo do plano, dê uma validade (como `live.revalidate_after`) para que nenhuma rotina periódica desfaça o ajuste antes da hora. Teste em `tests/test_daily.py` e o efeito no dia seguinte em `tests/test_next_day.py`.
 4. Se o tipo (`kind`) for novo, dê um nome amigável em `ADJ_KIND` (`frontend/src/pages/Daily.tsx`).
 
 ## Agente usando IA
@@ -50,3 +50,9 @@ Use `await self.office.llm.complete_json(agent=self.id, purpose="...", tier="new
 ## Ativo novo com preço real
 
 `route_for()` em `backend/app/broker/realdata.py` decide a fonte pelo nome (pares de moedas, cripto, aliases de índices, ações da B3). Para um ativo especial, adicione um alias em `YAHOO_ALIASES` (com o atraso conhecido) e, se for um contrato com tamanho próprio, um `Preset` em `EXTRA_PRESETS`. Teste em `tests/test_realdata.py` com a `FakeApis` e confira ao vivo pelo workflow **Verificação com preços reais**.
+
+## Regra nova na revisão das posições
+
+1. Campo novo em `PositionContext` (`backend/app/agents/review.py`), preenchido em `manager._position_context`.
+2. Regra em `decide()`: fechar vem antes de ajustar; stop novo sempre por `consider()` (só aperta e respeita `min_gap`).
+3. Teste da regra pura em `tests/test_position_review.py` (use `ctx(...)`) e, se mexer no fluxo, o teste com o Caio no mesmo arquivo.

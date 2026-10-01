@@ -18,6 +18,7 @@ const JOB_LABELS: Record<string, string> = {
   evolution: "evoluir estratégias",
   revalidate: "revalidar",
   decide: "montar plano",
+  review: "revisar posições",
   guard: "checar limites",
   equity: "registrar patrimônio",
   exits_review: "rever gestão de saída",
