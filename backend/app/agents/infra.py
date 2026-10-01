@@ -1,4 +1,4 @@
-"""Tito, o TI: cuida da conexão com o MetaTrader 5, dos dados e da manutenção."""
+"""Tito, o TI: cuida da conexão com o MetaTrader 5, dos preços (MT5, dados reais públicos ou simulado) e da manutenção."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class InfraAgent(Agent):
         role="TI e Dados",
         emoji="🔧",
         uses_ai=False,
-        description="Mantém o MetaTrader 5 conectado (qualquer corretora), sincroniza os candles, estima o fuso do servidor e faz a manutenção do banco.",
+        description="Mantém os preços chegando (MetaTrader 5 de qualquer corretora ou dados reais públicos do Yahoo/Binance), sincroniza os candles, estima o fuso do servidor e faz a manutenção do banco.",
     )
     interval = 10.0
     idle_task = "Monitorando o servidor"
@@ -40,10 +40,15 @@ class InfraAgent(Agent):
         self.status: dict = {"configured": False, "connected": False, "checked_at": None}
         self._healthy_streak = 0
         self._announced_down = False
+        self.feed: dict = {}
+        self._feed_down = False
 
     async def tick(self) -> None:
+        self.office.sync_data_family()
         if self.due("health", 20):
             await self.check_mt5()
+        if self.office.market.source() == "real" and self.due("feed", 60):
+            await self.check_feed()
         if self.is_running() and self.due("warm", 300):
             await self.warm_cache()
         if self.due("housekeeping", 3600):
@@ -62,7 +67,8 @@ class InfraAgent(Agent):
         client = office.terminals.client()
         now = datetime.now(timezone.utc).isoformat()
         if client is None:
-            self.status = {"configured": False, "connected": False, "checked_at": now, "message": "Nenhum terminal MT5 configurado: usando o mercado simulado."}
+            using = "os preços reais públicos (Yahoo/Binance)" if office.market.source() == "real" else "o mercado simulado"
+            self.status = {"configured": False, "connected": False, "checked_at": now, "message": f"Nenhum terminal MT5 configurado: usando {using}.", "feed": self.feed}
             office.market.mt5_ok = False
             self._publish()
             return
@@ -105,6 +111,7 @@ class InfraAgent(Agent):
             "balance": account.get("balance"),
             "offset_hours": office.market.offset_hours,
             "message": "Conectado" if connected else "Terminal aberto, mas sem conta conectada (faça login pela tela do MT5 ou em Configurações).",
+            "feed": self.feed,
         }
         if connected:
             self._healthy_streak += 1
@@ -121,10 +128,11 @@ class InfraAgent(Agent):
     def _down(self, message: str, now: str) -> None:
         self.office.market.mt5_ok = False
         self._healthy_streak = 0
-        self.status = {"configured": True, "connected": False, "checked_at": now, "message": message}
+        self.status = {"configured": True, "connected": False, "checked_at": now, "message": message, "feed": self.feed}
         if not self._announced_down:
+            using = "os preços reais públicos" if self.office.market.source() == "real" else "o mercado simulado"
             self.tell("all", "⚠️ " + self.line("mt5_down") + f" ({message[:60]})", kind="alerta")
-            self.log(f"MetaTrader 5 indisponível: {message}. Usando o mercado simulado enquanto isso.", kind="mt5", level="warning")
+            self.log(f"MetaTrader 5 indisponível: {message}. Usando {using} enquanto isso.", kind="mt5", level="warning")
             self._announced_down = True
         self.set_state("alert", "server", f"MT5 indisponível: {message[:80]}", "⚠️")
         self._publish()
@@ -149,6 +157,43 @@ class InfraAgent(Agent):
 
     def _publish(self) -> None:
         bus.publish({"type": "mt5", **self.status, "source": self.office.market.source()})
+
+    # ------------------------------------------------- preços reais
+    async def check_feed(self) -> None:
+        """Confere se os preços reais (Yahoo/Binance) estão chegando para os ativos da lista."""
+        cfg = get_config()
+        rows: dict[str, dict] = {}
+        errors: list[str] = []
+        for symbol in cfg.watchlist[:12]:
+            try:
+                t = await self.office.market.tick(symbol)
+            except Exception as exc:
+                errors.append(f"{symbol}: {str(exc)[:80]}")
+                continue
+            rows[symbol] = {
+                "price": round((t["bid"] + t["ask"]) / 2, 6),
+                "open": bool(t.get("open")),
+                "age_s": max(0, int(time.time() - int(t.get("time") or time.time()))),
+                "source": t.get("source", ""),
+            }
+        ok = bool(rows)
+        self.feed = {"ok": ok, "checked_at": datetime.now(timezone.utc).isoformat(), "symbols": rows, "errors": errors[:6]}
+        self.status = {**self.status, "feed": self.feed}
+        if not ok and not self._feed_down:
+            self._feed_down = True
+            self.tell("all", "⚠️ Os preços reais pararam de chegar (" + (errors[0] if errors else "sem resposta") + "). Sem preço novo, ninguém entra até voltar.", kind="alerta")
+            self.log("Dados reais indisponíveis: " + "; ".join(errors[:3]), kind="mt5", level="warning")
+            self.set_state("alert", "server", "Preços reais fora do ar", "⚠️")
+        elif ok and self._feed_down:
+            self._feed_down = False
+            self.tell("all", "📡 Preços reais de volta. Pode seguir, time!", kind="info")
+            self.log("Dados reais restabelecidos", kind="mt5")
+            self.idle("Monitorando o servidor")
+        if ok:
+            self.skills.gain("dados", 1, f"{len(rows)} cotações reais")
+            if errors and self.due("feed_warn", 1800):
+                self.log("Sem cotação real de: " + "; ".join(errors[:4]) + ". Confira o nome do ativo em Config.", kind="mt5", level="warning")
+        self._publish()
 
     # ----------------------------------------------------------- dados
     async def warm_cache(self) -> None:

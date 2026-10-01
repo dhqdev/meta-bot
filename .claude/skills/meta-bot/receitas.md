@@ -46,3 +46,7 @@ Use `await self.office.llm.complete_json(agent=self.id, purpose="...", tier="new
 1. Commit em português na `main` (ou PR). O CI testa e publica `ghcr.io/dhqdev/meta-bot-backend|frontend:latest` (multi-arch, o servidor é ARM).
 2. No Portainer (stack do Meta-Bot): *Update the stack → Re-pull image*, ou webhook no secret `PORTAINER_WEBHOOK_URL`.
 3. Variável nova de ambiente: documente em `.env.example`, `docker-compose.yml`, `deploy/portainer-stack.yml` e no README, sem valores reais.
+
+## Ativo novo com preço real
+
+`route_for()` em `backend/app/broker/realdata.py` decide a fonte pelo nome (pares de moedas, cripto, aliases de índices, ações da B3). Para um ativo especial, adicione um alias em `YAHOO_ALIASES` (com o atraso conhecido) e, se for um contrato com tamanho próprio, um `Preset` em `EXTRA_PRESETS`. Teste em `tests/test_realdata.py` com a `FakeApis` e confira ao vivo pelo workflow **Verificação com preços reais**.

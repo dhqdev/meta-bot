@@ -4,6 +4,7 @@
 
 ![Escritório do Meta-Bot](docs/img/escritorio.png)
 
+- **Conta simulada com preços reais, sem corretora**: forex, ouro, índices e B3 pelo Yahoo Finance e cripto pela Binance, de graça. Funciona como uma conta de verdade, só que sem risco.
 - **Objetivo: terminar o dia no lucro.** Você define o **limite de perda do dia** e a **meta de ganho**; bateu um dos dois, a equipe para até amanhã.
 - **Agentes com personalidade**: notícias, horários e calendário, estratégias, gerente, risco, caixa, auditoria e TI, cada um com seu jeito de falar. A **conversa da equipe** aparece ao vivo no escritório.
 - **Daily às 19h**: a equipe se reúne, avalia o dia, escreve um relatório (aba **Daily**) e aplica os aprendizados no dia seguinte.
@@ -22,22 +23,23 @@
 
 1. [A equipe](#a-equipe)
 2. [Como uma operação acontece](#como-uma-operação-acontece)
-3. [Metas do dia](#metas-do-dia)
-4. [Daily das 19h](#daily-das-19h)
-5. [Scalper × day trade × posição longa](#scalper--day-trade--posição-longa)
-6. [Skills que evoluem](#skills-que-evoluem)
-7. [Estratégias e backtest](#estratégias-e-backtest)
-8. [Inteligência artificial (OpenRouter)](#inteligência-artificial-openrouter)
-9. [Configurações](#configurações)
-10. [Celular e app (PWA)](#celular-e-app-pwa)
-11. [MetaTrader 5: qualquer corretora](#metatrader-5-qualquer-corretora)
-12. [Subir no Portainer (trade.tekvosoft.com)](#subir-no-portainer-tradetekvosoftcom)
-13. [Rodar na sua máquina](#rodar-na-sua-máquina)
-14. [Segurança](#segurança)
-15. [Estrutura do projeto e API](#estrutura-do-projeto-e-api)
-16. [Testes e CI](#testes-e-ci)
-17. [Skill para o Claude Code](#skill-para-o-claude-code)
-18. [Créditos](#créditos)
+3. [Preços reais sem corretora](#preços-reais-sem-corretora)
+4. [Metas do dia](#metas-do-dia)
+5. [Daily das 19h](#daily-das-19h)
+6. [Scalper × day trade × posição longa](#scalper--day-trade--posição-longa)
+7. [Skills que evoluem](#skills-que-evoluem)
+8. [Estratégias e backtest](#estratégias-e-backtest)
+9. [Inteligência artificial (OpenRouter)](#inteligência-artificial-openrouter)
+10. [Configurações](#configurações)
+11. [Celular e app (PWA)](#celular-e-app-pwa)
+12. [MetaTrader 5: qualquer corretora](#metatrader-5-qualquer-corretora)
+13. [Subir no Portainer (trade.tekvosoft.com)](#subir-no-portainer-tradetekvosoftcom)
+14. [Rodar na sua máquina](#rodar-na-sua-máquina)
+15. [Segurança](#segurança)
+16. [Estrutura do projeto e API](#estrutura-do-projeto-e-api)
+17. [Testes e CI](#testes-e-ci)
+18. [Skill para o Claude Code](#skill-para-o-claude-code)
+19. [Créditos](#créditos)
 
 ---
 
@@ -81,6 +83,26 @@ flowchart LR
 Cada passo é uma **mensagem da equipe** (pedido → resposta), que aparece na aba **Conversa** do escritório e como um envelope voando de uma mesa para a outra. Avisos para todo mundo (evento chegando, meta batida, MT5 caiu) aparecem como uma onda saindo de quem falou.
 
 No modo **simulado**, o Caio usa um corretor de papel com spread, slippage e comissão. No modo **conta da corretora**, as ordens vão para o MT5 (exige senha, confirmação e MT5 conectado).
+
+## Preços reais sem corretora
+
+A conta simulada funciona como uma conta de verdade: **preços reais**, spread de corretora, slippage e comissão, sem enviar ordens a ninguém. Sem MetaTrader 5 ligado, os preços vêm de fontes públicas e gratuitas, sem cadastro:
+
+| Ativo (como na corretora) | De onde vem o preço | Atraso |
+|---|---|---|
+| Forex (EURUSD, GBPUSD, USDJPY, EURJPY…) | Yahoo Finance | tempo real |
+| Ouro (XAUUSD) | Binance (PAX Gold, 1 token = 1 onça); reserva: futuro no Yahoo | tempo real |
+| Cripto (BTCUSD, ETHUSD, SOLUSD…) | Binance (livro de ofertas); reserva: Yahoo | tempo real |
+| S&P 500, Dow Jones, Nasdaq (US500, US30, NAS100) | Yahoo Finance (índice à vista, no pregão de Nova York) | tempo real |
+| DAX, FTSE, Nikkei, prata, petróleo | Yahoo Finance | 10 a 20 min |
+| Mini índice (WIN$N) e mini dólar (WDO$N) | Yahoo Finance (Ibovespa e dólar comercial) | 15 min / tempo real |
+| Ações da B3 (PETR4, VALE3…) | Yahoo Finance | 15 min |
+
+- Aceita os nomes com sufixo de corretora (EURUSDm, XAUUSD.a…). O histórico é baixado uma vez e depois só o trecho novo, para não abusar das fontes.
+- O mercado fecha de verdade: fim de semana, fora do pregão e feriados (sem preço novo), nada entra.
+- O **Tito** confere a cada minuto se os preços estão chegando e avisa a equipe se pararem; sem preço novo, ninguém entra.
+- Com o **MT5 conectado**, os preços passam a vir da sua corretora. Sem internet (ou escolhendo em **Config. → Ajustes finos → Conta simulada e MT5**), dá para voltar ao **mercado simulado**, que serve só para testes.
+- Ao trocar de preço simulado para preço real (ou o contrário), o que foi aprendido com a outra origem não vale mais: a conta simulada recomeça, posições abertas são anuladas sem lucro nem prejuízo e a Estela refaz todos os testes com o histórico novo.
 
 ## Metas do dia
 
@@ -201,6 +223,7 @@ Variáveis de ambiente (prefixo `MB_`, backend):
 | `MB_MT5_PANEL_URL` | — | link do painel web do MT5 na tela, se houver (ex.: `/mt5/` no docker-compose local). |
 | `MB_OPENROUTER_API_KEY` | — | chave do OpenRouter. |
 | `MB_TIMEZONE` | `America/Sao_Paulo` | fuso usado na tela, nas metas do dia e na daily. |
+| `MB_NETWORK_ENABLED` | `true` | busca preços reais, notícias e calendário na internet (`false` = mercado simulado, usado nos testes). |
 
 Variáveis do bridge e do container do MT5 (`MT5_BRIDGE_TOKEN`, `MT5_BRIDGE_PORT`, `MT5_TERMINAL_PATH`, `MT5_LOGIN`, `MT5_INSTALLER_URL`…) estão em [`mt5/README.md`](mt5/README.md) e [`mt5/windows/LEIA-ME.md`](mt5/windows/LEIA-ME.md).
 
@@ -232,7 +255,7 @@ Meta-Bot (servidor)  ──HTTP + token, via Tailscale──►  bridge  ──�
 - **Qualquer corretora que ofereça MT5:** forex, índices, cripto e corretoras brasileiras com MT5 para B3. Para usar várias, rode um MT5 e um bridge por conta e cadastre cada um. O terminal marcado como ativo é o usado.
 - **Ordens de verdade** só depois de **Config. → Modo de operação → Usar a conta do MT5**. Antes disso, o sistema usa os preços da corretora e opera no simulado. O Meta-Bot só mexe nas posições com o *magic number* dele.
 
-Enquanto o MT5 não está conectado, o sistema usa um **mercado simulado** (determinístico, com sessões, volatilidade por hora e regimes) para você ver a equipe trabalhando desde o primeiro minuto.
+Enquanto o MT5 não está conectado, a conta simulada usa os **preços reais públicos** (seção [Preços reais sem corretora](#preços-reais-sem-corretora)). O **mercado simulado** (determinístico, com sessões e regimes) fica para os testes e para quando não há internet.
 
 ## Subir no Portainer (trade.tekvosoft.com)
 
@@ -256,7 +279,7 @@ Como o repositório é público, as imagens também são: o Portainer baixa sem 
 | `MB_DATABASE_URL` | a senha do seu Postgres no lugar de `TROQUE_SENHA_DO_POSTGRES` (caracteres especiais em formato de URL, ex.: `@` → `%40`). |
 | `MB_ADMIN_EMAIL` / `MB_ADMIN_PASSWORD` | o seu login no Meta-Bot (criado na primeira inicialização). |
 | `MB_MT5_BRIDGE_TOKEN` | valor aleatório (`openssl rand -hex 24`). O **mesmo** valor vai no `iniciar-bridge.bat` da máquina do MT5. |
-| `MB_MT5_BRIDGE_URL` | endereço do bridge, ex.: `http://100.101.102.103:8001`. Pode ficar vazio: o sistema usa o mercado simulado até você ligar o MT5. |
+| `MB_MT5_BRIDGE_URL` | endereço do bridge, ex.: `http://100.101.102.103:8001`. Pode ficar vazio: a conta simulada usa preços reais públicos até você ligar o MT5. |
 | `MB_OPENROUTER_API_KEY` | a sua chave do OpenRouter (pode deixar vazio e cadastrar depois pela tela). |
 
 O backend **se recusa a subir** se algum `TROQUE_...` ficar para trás. O bridge do MT5 também recusa o token de exemplo. Clique em *Deploy the stack*.
@@ -312,10 +335,11 @@ meta-bot/
 │   ├── app/agents/          Tito, Nina, Hugo, Estela, Gustavo, Rita, Caio, Aurora, personalidades,
 │   │                        daily (daily.py) e playbooks (manual da equipe e de cada função)
 │   ├── app/core/            indicadores, 18 estratégias, backtest, métricas, evolução, horizontes, risco
-│   ├── app/broker/          cliente do bridge MT5, corretor de papel, mercado simulado
+│   ├── app/broker/          cliente do bridge MT5, preços reais (Yahoo/Binance), corretor de papel, mercado simulado
 │   ├── app/services/        IA (OpenRouter), feeds de notícias e calendário
 │   ├── app/api/             rotas REST + WebSocket
-│   └── tests/               127 testes
+│   ├── scripts/             verificar_sistema.py: escritório inteiro com preços reais (precisa de internet)
+│   └── tests/               138 testes
 ├── frontend/                React + Vite + Tailwind; escritório em canvas (pixel-art gerada no código)
 │   ├── src/office/          mapa, sprites, pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
 │   ├── public/              manifesto, service worker e ícones do app (PWA)
@@ -346,12 +370,13 @@ API (todas exigem login, exceto `/api/health` e `/api/auth/status|setup|login`):
 ## Testes e CI
 
 ```bash
-cd backend && python -m pytest -q          # 127 testes
+cd backend && python -m pytest -q          # 138 testes
+cd backend && python scripts/verificar_sistema.py --minutos 5   # preços reais + agentes (precisa de internet)
 cd frontend && npm run build               # typecheck + build
 BASE_URL=http://127.0.0.1:4173 node frontend/e2e/smoke.mjs   # com backend e "npm run preview" no ar
 ```
 
-Os testes cobrem: estratégias sem olhar o futuro, backtest (custos, stops, ordens stop), métricas e tempo em posição, evolução (variantes scalper e de segurar mais), risco e lote, **metas do dia** (limite, meta, fechamento e virada do dia), **daily** (relatório, ajustes, lições, foco da manhã, com e sem IA), preferência de estilo, **efeito de cada configuração**, bridge do MT5 (com um MT5 falso), API (login, 2FA, CSRF, modo real, mensagens de erro), agentes, feeds e a camada de IA (OpenRouter com respostas simuladas). O teste de ponta a ponta abre todas as telas, faz uma daily, confere a conversa, o PWA e o layout no celular. O CI roda tudo isso e publica as imagens.
+Os testes cobrem: estratégias sem olhar o futuro, backtest (custos, stops, ordens stop), métricas e tempo em posição, evolução (variantes scalper e de segurar mais), risco e lote, **metas do dia** (limite, meta, fechamento e virada do dia), **daily** (relatório, ajustes, lições, foco da manhã, com e sem IA), preferência de estilo, **efeito de cada configuração**, bridge do MT5 (com um MT5 falso), API (login, 2FA, CSRF, modo real, mensagens de erro), agentes, feeds, a camada de IA (OpenRouter com respostas simuladas) e os **preços reais** (Yahoo e Binance com respostas no formato das APIs: histórico, atualização incremental, cotação, mercado fechado, reserva quando uma fonte cai, troca de origem). O teste de ponta a ponta abre todas as telas, faz uma daily, confere a conversa, o PWA e o layout no celular. O CI roda tudo isso e publica as imagens. O workflow **Verificação com preços reais** ([`.github/workflows/verificacao.yml`](.github/workflows/verificacao.yml)) liga o escritório inteiro com preços de verdade, notícias e calendário por alguns minutos, faz a daily e mostra o relatório de cada agente.
 
 ## Skill para o Claude Code
 

@@ -28,13 +28,16 @@ backend/app/
 ├── broker/
 │   ├── mt5.py           cliente HTTP do bridge (token)
 │   ├── terminals.py     terminais MT5 cadastrados (um ativo por vez)
-│   ├── market.py        MarketService: MT5 ou mercado simulado (synthetic.py)
+│   ├── market.py        MarketService: MT5, preços reais públicos (realdata.py) ou mercado simulado (synthetic.py)
+│   ├── realdata.py      RealMarket: Yahoo Finance + Binance (route_for, cache incremental, tick, spec, atrasos)
 │   └── execution.py     PaperBroker (simulado) e LiveBroker (MT5)
 ├── services/
 │   ├── llm.py           LLMService (OpenRouter, modelos fixos, JSON Schema, orçamento)
 │   └── feeds.py         RSS e calendário (Forex Factory)
 └── api/                 agents, auth, daily, market, settings, strategies, system, trades, ws
 backend/tests/           pytest (conftest: banco limpo por teste; fixtures office, client_owner)
+
+backend/scripts/verificar_sistema.py   escritório inteiro com preços reais por N minutos + relatório (usado no workflow verificacao.yml)
 
 frontend/src/
 ├── App.tsx              rotas: / (Escritório), /agentes, /daily, /estrategias, /operacoes, /config
@@ -70,6 +73,7 @@ deploy/mt5-remoto.yml        MT5 em Docker numa máquina Linux Intel/AMD
 | `daily.last` / `daily.focus_told` | daily / Gustavo | último dia com daily; dia em que o foco foi lembrado |
 | `ai_status` | llm.py | última chamada (ok ou erro) mostrada na tela |
 | `paper_reset_at` | sistema | quando a conta simulada foi zerada |
+| `market.family` | office.sync_data_family | `real` ou `simulado`: origem dos preços com que a equipe aprendeu |
 
 Segredos (criptografados): `openrouter_api_key` e credenciais de terminais.
 
@@ -102,11 +106,11 @@ Segredos (criptografados): `openrouter_api_key` e credenciais de terminais.
 - **Nina:** `news_enabled`, `news_interval_minutes`, `news_feeds`, `ai_news_interval_minutes`.
 - **Daily:** `daily_meeting_enabled`, `daily_meeting_time`.
 - **IA:** `ai_enabled`, `ai_max_calls_per_hour`, `ai_daily_budget_usd` (modelos não são configuráveis).
-- **Simulado/MT5:** `paper_initial_balance`, `paper_commission_per_lot`, `paper_slippage_points`, `data_source`, `magic_number`, `deviation_points`, `server_utc_offset_hours`.
+- **Simulado/MT5:** `paper_initial_balance`, `paper_commission_per_lot`, `paper_slippage_points`, `data_source` (auto | real | mt5 | synthetic), `magic_number`, `deviation_points`, `server_utc_offset_hours`.
 - **Sistema (rotas próprias, com senha):** `system_running`, `mode`.
 
 A tela (`frontend/src/pages/Settings.tsx`) descreve cada campo em `SECTIONS`/`SIMPLE_FIELDS`; `tests/test_settings_effects.py` prova que os principais mudam o comportamento.
 
 ## Variáveis de ambiente (backend)
 
-`MB_ENV`, `MB_SECRET_KEY`, `MB_DATABASE_URL`, `MB_DATA_DIR`, `MB_ADMIN_EMAIL`, `MB_ADMIN_PASSWORD`, `MB_COOKIE_SECURE`, `MB_PUBLIC_URL`, `MB_ALLOWED_ORIGINS`, `MB_MT5_BRIDGE_URL`, `MB_MT5_BRIDGE_TOKEN`, `MB_MT5_PANEL_URL`, `MB_OPENROUTER_API_KEY`, `MB_TIMEZONE` (padrão America/Sao_Paulo). Nos testes: `MB_AGENTS_ENABLED=false`, `MB_NETWORK_ENABLED=false`.
+`MB_ENV`, `MB_SECRET_KEY`, `MB_DATABASE_URL`, `MB_DATA_DIR`, `MB_ADMIN_EMAIL`, `MB_ADMIN_PASSWORD`, `MB_COOKIE_SECURE`, `MB_PUBLIC_URL`, `MB_ALLOWED_ORIGINS`, `MB_MT5_BRIDGE_URL`, `MB_MT5_BRIDGE_TOKEN`, `MB_MT5_PANEL_URL`, `MB_OPENROUTER_API_KEY`, `MB_TIMEZONE` (padrão America/Sao_Paulo), `MB_NETWORK_ENABLED` (padrão true: preços reais, notícias e calendário). Nos testes: `MB_AGENTS_ENABLED=false`, `MB_NETWORK_ENABLED=false`.

@@ -1,4 +1,4 @@
-"""Dados de mercado: MetaTrader 5 (quando conectado) ou o mercado simulado."""
+"""Dados de mercado: MetaTrader 5 (quando conectado), dados reais públicos (Yahoo/Binance) ou o mercado simulado."""
 
 from __future__ import annotations
 
@@ -11,8 +11,10 @@ import numpy as np
 import pandas as pd
 
 from app.broker.mt5 import MT5Error, MT5Unavailable
+from app.broker.realdata import RealDataError, RealMarket
 from app.broker.synthetic import SyntheticMarket
 from app.broker.terminals import TerminalManager
+from app.config import get_settings
 from app.core.bars import Bars
 from app.runtime import TIMEFRAME_SECONDS, get_config
 
@@ -24,9 +26,10 @@ class MarketDataError(Exception):
 
 
 class MarketService:
-    def __init__(self, terminals: TerminalManager, synthetic: SyntheticMarket | None = None):
+    def __init__(self, terminals: TerminalManager, synthetic: SyntheticMarket | None = None, real: RealMarket | None = None):
         self.terminals = terminals
         self.synthetic = synthetic or SyntheticMarket()
+        self.real = real or RealMarket()
         self.mt5_ok = False  # atualizado pelo agente de TI
         self.auto_offset_hours: float = 0.0
         self._rates: dict[tuple, tuple[float, pd.DataFrame, float]] = {}
@@ -35,12 +38,21 @@ class MarketService:
 
     # ------------------------------------------------------------ origem
     def source(self) -> str:
+        """mt5 | real | synthetic. Automático: MT5 conectado > dados reais públicos > simulado (sem internet)."""
         choice = get_config().data_source
-        if choice == "synthetic":
-            return "synthetic"
-        if choice == "mt5":
+        if choice in ("synthetic", "mt5", "real"):
+            return choice
+        if self.mt5_ok:
             return "mt5"
-        return "mt5" if self.mt5_ok else "synthetic"
+        return "real" if get_settings().network_enabled else "synthetic"
+
+    def family(self) -> str:
+        """"real" (MT5 ou dados públicos: preços de verdade) ou "simulado"."""
+        return "simulado" if self.source() == "synthetic" else "real"
+
+    def data_delay(self, symbol: str) -> int:
+        """Atraso dos preços deste ativo em segundos (só alguns dados públicos têm atraso)."""
+        return self.real.delay(symbol) if self.source() == "real" else 0
 
     @property
     def offset_hours(self) -> float:
@@ -64,6 +76,11 @@ class MarketService:
             return cached[1]
         if src == "synthetic":
             spec = self.synthetic.spec(symbol)
+        elif src == "real":
+            try:
+                spec = await self.real.spec(symbol)
+            except RealDataError as exc:
+                raise MarketDataError(str(exc)) from exc
         else:
             try:
                 info = await self._client().symbol(symbol)
@@ -97,6 +114,12 @@ class MarketService:
         if src == "synthetic":
             df = await asyncio.to_thread(self.synthetic.rates, symbol, TIMEFRAME_SECONDS[timeframe], count)
             return df, self.synthetic.spec(symbol)["point"]
+        if src == "real":
+            try:
+                df = await self.real.rates(symbol, TIMEFRAME_SECONDS[timeframe], count)
+            except RealDataError as exc:
+                raise MarketDataError(str(exc)) from exc
+            return df, (await self.spec(symbol))["point"]
         spec = await self.spec(symbol)
         try:
             data = await self._client().rates(symbol, timeframe, count)
@@ -108,6 +131,11 @@ class MarketService:
         src = self.source()
         if src == "synthetic":
             return await asyncio.to_thread(self.synthetic.tick, symbol)
+        if src == "real":
+            try:
+                return await self.real.tick(symbol)
+            except RealDataError as exc:
+                raise MarketDataError(str(exc)) from exc
         try:
             t = await self._client().tick(symbol)
         except (MT5Error, MT5Unavailable) as exc:
@@ -121,8 +149,11 @@ class MarketService:
         }
 
     async def symbols(self, q: str = "") -> list[dict]:
-        if self.source() == "synthetic":
+        src = self.source()
+        if src == "synthetic":
             return self.synthetic.list_symbols(q)
+        if src == "real":
+            return self.real.list_symbols(q)
         try:
             return await self._client().symbols(q)
         except (MT5Error, MT5Unavailable) as exc:
@@ -131,6 +162,7 @@ class MarketService:
     def clear_cache(self) -> None:
         self._rates.clear()
         self._specs.clear()
+        self.real.clear()
 
 
 def rows_to_frame(rows: list[list[Any]], point: float, offset_hours: float) -> pd.DataFrame:

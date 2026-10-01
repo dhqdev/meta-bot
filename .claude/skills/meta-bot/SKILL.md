@@ -53,11 +53,16 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 
 `backend/app/core/horizons.py`: scalper ≤ 30 min, day trade ≤ 8 h, posição longa > 8 h. A evolução sempre testa a variante scalper (stop 1 ATR, alvo 1R, até 6 candles) e a de segurar mais (alvo 3R, mais tempo). `strategist.horizon_summary()` compara backtest e real; `manager.learn_horizons()` ajusta a preferência na daily; `build_candidates` multiplica a pontuação pelo peso.
 
+## Origem dos preços
+
+`MarketService.source()` (`backend/app/broker/market.py`): `mt5` (MT5 conectado) > `real` (preços públicos: `backend/app/broker/realdata.py`, Yahoo Finance para forex/índices/B3 e Binance para cripto e ouro via PAXG) > `synthetic` (sem internet: testes e `MB_NETWORK_ENABLED=false`). A conta simulada opera com qualquer uma. `office.sync_data_family()` detecta a troca entre preço simulado e real e reinicia o aprendizado (arquiva trades com `mode="paper-sim"`, reseta perfis, lições, pesos e a conta simulada). Alguns tickers do Yahoo têm atraso (`Route.delay`); a Estela tolera esse atraso ao conferir candles fechados.
+
 ## Comandos
 
 ```bash
 # backend (venv com requirements-dev.txt)
-cd backend && python -m pytest -q                      # ~127 testes, SQLite temporário, sem rede
+cd backend && python -m pytest -q                      # ~138 testes, SQLite temporário, sem rede
+cd backend && python scripts/verificar_sistema.py --minutos 5   # escritório com preços reais (precisa de internet)
 MB_ADMIN_EMAIL=voce@exemplo.com MB_ADMIN_PASSWORD=UmaSenhaForte123 uvicorn app.main:app --reload
 
 # frontend (Node 22)
@@ -75,6 +80,7 @@ Antes de dar algo por pronto: testes do backend, `npm run build` (typecheck) e, 
 - `Base.metadata.create_all` cria **tabelas novas**, mas **não adiciona colunas** em tabelas que já existem no Postgres de produção. Prefira tabela nova ou guardar em JSON/kv; coluna nova exige migração manual.
 - Configuração editável mora no kv (`runtime_config`) e é validada por `RuntimeConfig` (`backend/app/runtime.py`). Mudou o formato? Suba `CONFIG_VERSION` e converta em `_migrate`.
 - Horários: o banco guarda UTC; a tela e a daily usam `MB_TIMEZONE` (America/Sao_Paulo). Comparações de validade (ex.: `team.avoid_hours[...]["until"]`) são strings ISO em UTC.
+- Preços reais dependem de APIs públicas sem garantia (Yahoo pode responder 429). `RealMarket` faz cache incremental, recua 1 min no 429 e usa o último histórico; nunca misture preço simulado com real numa mesma série. O ambiente de nuvem do Claude Code pode bloquear Yahoo/Binance: a prova ao vivo é o workflow **Verificação com preços reais** no GitHub Actions.
 - O servidor de produção é **ARM**: imagens multi-arch (backend e frontend). O MT5 **não roda na stack**; fica num PC/VPS Windows com o bridge, ligado por Tailscale (`MB_MT5_BRIDGE_URL` + `MB_MT5_BRIDGE_TOKEN`).
 - Testes de agentes usam `BTCUSD` (mercado simulado aberto 24h). Para matar processos em testes locais, ache o PID com `ps` e use `kill <pid>` (padrões do `pkill` podem casar com o próprio shell).
 - Textos de tela, falas e mensagens de erro da API são para um dono leigo: português simples, sem jargão desnecessário (ver `FIELD_LABELS` em `backend/app/api/settings.py`).

@@ -6,6 +6,9 @@ import asyncio
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import delete, select, update
 
 from app.agents.auditor import AuditorAgent
 from app.agents.base import Agent
@@ -23,7 +26,8 @@ from app.broker.terminals import TerminalManager
 from app.config import Settings
 from app.db import session_scope
 from app.events import bus, record_activity
-from app.models import Signal, Trade
+from app.kv import kv_get, kv_set
+from app.models import KV, EquitySnapshot, Lesson, Signal, StrategyProfile, Trade
 from app.runtime import get_config
 from app.services.llm import LLMService
 
@@ -59,10 +63,72 @@ class Office:
     async def start(self) -> None:
         bus.bind_loop(asyncio.get_running_loop())
         self.ensure_setup()
+        self.sync_data_family()
         for agent in self.agents.values():
             self.tasks.append(asyncio.create_task(agent.run_forever(), name=f"agent-{agent.id}"))
         self.tasks.append(asyncio.create_task(self.daily_loop(), name="daily"))
         log.info("escritório aberto com %d agentes", len(self.agents))
+
+    # ------------------------------------------------- origem dos preços
+    def sync_data_family(self) -> bool:
+        """Preços simulados x preços reais (MT5 ou Yahoo/Binance).
+
+        Ao trocar de família, o que foi aprendido com a outra não vale: a conta simulada
+        recomeça, posições abertas são anuladas (sem lucro nem prejuízo), as estratégias são
+        retestadas com o histórico novo e as lições, horários evitados e pesos voltam ao início.
+        Devolve True quando houve a troca."""
+        family = self.market.family()
+        if getattr(self, "_family", None) == family:
+            return False
+        self._family = family
+        previous = kv_get("market.family")
+        if previous is None:
+            with session_scope() as s:
+                old_source = s.scalar(select(StrategyProfile.data_source).where(StrategyProfile.data_source != "").limit(1))
+            previous = None if old_source is None else ("simulado" if old_source == "synthetic" else "real")
+        kv_set("market.family", family)
+        if previous is None or previous == family:
+            return False
+        self._restart_learning(previous, family)
+        return True
+
+    def _restart_learning(self, previous: str, family: str) -> None:
+        now = datetime.now(timezone.utc)
+        archived = "paper-sim" if previous == "simulado" else "paper-real"
+        with session_scope() as s:
+            for tr in s.scalars(select(Trade).where(Trade.mode == "paper", Trade.status == "open")):
+                tr.status, tr.exit_price, tr.exit_time, tr.exit_reason, tr.pnl, tr.pnl_r = "closed", tr.entry_price, now, "troca de dados", 0.0, 0.0
+            s.execute(update(Trade).where(Trade.mode == "paper").values(mode=archived))
+            s.execute(update(EquitySnapshot).where(EquitySnapshot.mode == "paper").values(mode=archived))
+            s.execute(update(Signal).where(Signal.status.in_(("proposto", "aprovado", "aguardando"))).values(status="cancelado", reason="troca da origem dos preços"))
+            s.execute(
+                update(StrategyProfile).values(
+                    params={}, filters={}, risk={}, version=1, status="nova", score=0.0, metrics={}, is_metrics={}, oos_metrics={},
+                    hour_stats={}, live={}, data_source="", tested_at=None, evolved_at=None,
+                )
+            )
+            s.execute(update(Lesson).where(Lesson.active.is_(True)).values(active=False))
+            s.execute(delete(KV).where(KV.key.like("hour_profile:%")))
+        self.agents["cashier"].cancel_pending("troca da origem dos preços")
+        kv_set("paper_reset_at", now.isoformat())
+        for key in ("team.avoid_hours", "manager.weights", "manager.horizon_weights", "risk_state"):
+            kv_set(key, None)
+        self.market.clear_cache()
+        self.invalidate_exit_params()
+        manager = self.agents["manager"]
+        manager.plan = []
+        self.agents["schedule"]._profiles.clear()
+        self.publish_office(plan=[])
+        infra = self.agents["infra"]
+        if family == "real":
+            text = "📡 Agora estamos com preços reais do mercado! A conta simulada recomeça do zero e a Estela refaz todos os testes com o histórico de verdade."
+        else:
+            text = "🧪 Voltamos para o mercado simulado (sem preços reais). A conta simulada recomeça e as estratégias serão retestadas."
+        infra.tell("all", text, kind="alerta")
+        record_activity("infra", text + " Posições abertas foram anuladas sem lucro nem prejuízo; lições e horários evitados recomeçam.", kind="system", level="warning")
+        for agent_id, job in (("strategist", "ranking"), ("schedule", "hours"), ("infra", "warm")):
+            self.agents[agent_id].request(job)
+        log.info("origem dos preços: %s -> %s (aprendizado reiniciado)", previous, family)
 
     async def daily_loop(self) -> None:
         """Confere a cada 30 s se chegou a hora da daily."""

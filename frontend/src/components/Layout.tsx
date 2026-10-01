@@ -38,11 +38,15 @@ export function StatusChips() {
   const { system, connected } = useLive();
   const mt5 = system.mt5 || {};
   const mt5Tone = mt5.connected ? "green" : mt5.configured ? "red" : "slate";
-  const mt5Label = mt5.connected ? `MT5 ${mt5.server || "conectado"}` : mt5.configured ? "MT5 fora do ar" : "MT5 não configurado";
+  const mt5Label = mt5.connected ? `MT5 ${mt5.server || "conectado"}` : mt5.configured ? "MT5 fora do ar" : "sem MT5";
   return (
     <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto">
       <Badge tone={system.mode === "live" ? "gold" : "blue"}>{system.mode === "live" ? "CONTA MT5" : "SIMULADO"}</Badge>
       <DayGoalChip />
+      {system.data_source === "real" && (
+        <Badge tone={mt5.feed?.ok === false ? "red" : "green"}>{mt5.feed?.ok === false ? "preços reais fora do ar" : "preços reais"}</Badge>
+      )}
+      {system.data_source === "synthetic" && <Badge tone="purple">mercado simulado</Badge>}
       <Badge tone={mt5Tone}>{mt5Label}</Badge>
       <Badge tone={system.ai ? "green" : "slate"}>
         <Bot className="h-3 w-3" /> {system.ai ? "IA ligada" : "sem IA"}

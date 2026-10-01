@@ -439,8 +439,9 @@ class StrategistAgent(Agent):
             if last is not None and last_t <= last:
                 continue
             self._last_bar[key] = last_t
-            if now - (last_t + tf_sec) > 0.25 * tf_sec:
-                continue  # candle fechou há muito tempo (ex.: sistema acabou de ligar)
+            # candle fechou há muito tempo (ex.: sistema acabou de ligar); preços públicos podem chegar com atraso
+            if now - (last_t + tf_sec) > 0.25 * tf_sec + self.office.market.data_delay(setup["symbol"]) + 60:
+                continue
             await self._check_setup(setup, bars)
 
     async def _check_setup(self, setup: dict, bars: Bars) -> None:

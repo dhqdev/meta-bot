@@ -1,0 +1,36 @@
+# Verificação com preços reais: liga o escritório inteiro numa conta simulada usando os preços
+# de verdade (Yahoo Finance e Binance, sem corretora), com notícias e calendário da internet,
+# e mostra o relatório de cada agente. Roda a cada mudança no backend e pode ser disparada à mão.
+name: Verificação com preços reais
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", ".github/workflows/verificacao.yml"]
+  workflow_dispatch:
+    inputs:
+      minutos:
+        description: "Minutos com o escritório ligado"
+        default: "6"
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    name: Escritório com preços reais
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Instalar dependências
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Preços reais, agentes e daily
+        working-directory: backend
+        run: python scripts/verificar_sistema.py --minutos "${{ github.event.inputs.minutos || '5' }}"

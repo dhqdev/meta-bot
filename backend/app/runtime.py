@@ -41,7 +41,8 @@ class RuntimeConfig(BaseModel):
     # --- Sistema
     system_running: bool = False
     mode: Literal["paper", "live"] = "paper"
-    data_source: Literal["auto", "mt5", "synthetic"] = "auto"
+    # auto = MT5 quando conectado; senão, preços reais públicos (Yahoo/Binance); sem internet, o simulado
+    data_source: Literal["auto", "mt5", "real", "synthetic"] = "auto"
 
     # --- Ativos
     watchlist: list[str] = Field(default_factory=lambda: ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US500", "BTCUSD"])

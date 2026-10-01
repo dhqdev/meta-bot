@@ -58,6 +58,7 @@ export function StrategiesPage() {
   );
 }
 
+const SOURCE_LABEL: Record<string, string> = { mt5: "dados do MT5", real: "preços reais (Yahoo Finance/Binance)", synthetic: "o mercado simulado" };
 const HORIZON_LABEL: Record<string, string> = { scalp: "scalper", day: "day trade", swing: "posição longa" };
 
 /** Scalper x day trade x posição longa: o que o backtest e as operações reais mostram, e a preferência aprendida. */
@@ -257,7 +258,7 @@ function ProfileDetail({ id, onClose }: { id: number | null; onClose: () => void
             <h4 className="mb-1 text-xs font-semibold text-muted">Por que {d.status === "aprovada" ? "foi aprovada" : "não foi aprovada"}</h4>
             {(d.metrics?.reasons || []).length === 0 ? <p className="text-xs text-up">Passou em todos os critérios.</p> : d.metrics.reasons.map((r: string) => <p key={r} className="text-xs text-down">• {r}</p>)}
             <p className="mt-2 text-xs text-muted">
-              Testada {ago(d.tested_at)} com dados {d.data_source === "mt5" ? "do MT5" : "do mercado simulado"}. {d.evolved_at ? `Última evolução ${ago(d.evolved_at)}.` : ""}
+              Testada {ago(d.tested_at)} com {SOURCE_LABEL[d.data_source] ?? "dados do mercado"}. {d.evolved_at ? `Última evolução ${ago(d.evolved_at)}.` : ""}
             </p>
           </div>
           <div>
@@ -347,7 +348,7 @@ function Backtest() {
         <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
           <Card title={`Resultados · ${result.symbol} ${result.timeframe} · ${result.bars} candles`} pad={false}>
             <p className="px-4 pt-3 text-xs text-muted">
-              Período {dateTime(result.start)} a {dateTime(result.end)} ({result.data_source === "mt5" ? "dados do MT5" : "mercado simulado"}). “Recente” = depois de {dateTime(result.split_time)}, período que não entra na escolha.
+              Período {dateTime(result.start)} a {dateTime(result.end)} ({SOURCE_LABEL[result.data_source] ?? "dados do mercado"}). “Recente” = depois de {dateTime(result.split_time)}, período que não entra na escolha.
             </p>
             <div className="scroll-thin overflow-x-auto">
               <table className="mt-2 w-full text-sm">

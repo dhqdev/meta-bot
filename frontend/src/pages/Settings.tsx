@@ -172,11 +172,12 @@ const SECTIONS: Section[] = [
         label: "Origem dos preços",
         type: "select",
         options: [
-          ["auto", "Automático (MT5 quando conectado)"],
+          ["auto", "Automático (MT5 se conectado; senão preços reais)"],
+          ["real", "Preços reais grátis (Yahoo Finance e Binance)"],
           ["mt5", "Sempre o MT5"],
-          ["synthetic", "Sempre o mercado simulado"],
+          ["synthetic", "Mercado simulado (sem internet)"],
         ],
-        hint: "O mercado simulado serve para testar o sistema sem corretora.",
+        hint: "Sem corretora, a conta simulada usa preços reais do Yahoo Finance (forex, ouro, índices, B3) e da Binance (cripto). O mercado simulado é só para testes sem internet. Ao trocar entre preço simulado e real, a conta simulada recomeça e as estratégias são retestadas.",
       },
       { key: "magic_number", label: "Número mágico", int: true, min: 1, max: 2147483647, hint: "Identifica no MT5 as ordens abertas pelo META-BOT. Não mude com posições abertas." },
       { key: "deviation_points", label: "Desvio máximo da ordem", int: true, min: 0, max: 1000, suffix: "pontos", hint: "Quanto o preço pode escorregar ao enviar uma ordem a mercado no MT5." },
@@ -765,7 +766,7 @@ function ModeCard() {
         )}
       </div>
       <p className="mt-3 text-xs text-muted">
-        No simulado a equipe usa os preços do MT5 (ou do mercado simulado) sem enviar ordens — ideal para ver como ela se sai. Na conta do MT5 as ordens vão para a conta logada no terminal: comece por uma <b>conta demo</b>.
+        Na <b>conta simulada</b> a equipe opera com <b>preços reais</b> (do MT5 se estiver ligado; senão, grátis do Yahoo Finance e da Binance), mas sem enviar ordens: é como uma conta de verdade, sem risco e sem precisar de corretora. Na conta do MT5 as ordens vão para a conta logada no terminal: comece por uma <b>conta demo</b>.
       </p>
       <PasswordPrompt
         open={prompt === "live"}
@@ -862,7 +863,7 @@ function MT5Card() {
             </div>
           </div>
         ))}
-        {!q.data?.length && <p className="text-sm text-muted">Nenhum MetaTrader 5 ligado ainda: o sistema usa o mercado simulado.</p>}
+        {!q.data?.length && <p className="text-sm text-muted">Nenhum MetaTrader 5 ligado ainda: a conta simulada usa preços reais grátis (Yahoo Finance e Binance).</p>}
         <Button variant="subtle" className="text-xs" onClick={() => setEdit({ name: q.data?.length ? "MT5 corretora 2" : "MT5 principal", bridge_url: "http://", active: !q.data?.length })}>
           <Plus className="h-3.5 w-3.5" /> {q.data?.length ? "Adicionar terminal (outra corretora)" : "Ligar um MetaTrader 5"}
         </Button>

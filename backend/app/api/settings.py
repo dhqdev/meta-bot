@@ -107,6 +107,7 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
         raise HTTPException(status_code=400, detail=friendly_error(exc)) from exc
     if {"data_source", "server_utc_offset_hours"} & set(patch):
         office.market.clear_cache()
+        office.sync_data_family()
     if {"break_even_r", "trailing_start_r", "trailing_atr_mult", "adaptive_exits"} & set(patch):
         office.invalidate_exit_params()
     if {"watchlist", "timeframes", "enabled_strategies", "rank_by", "min_trades", "min_profit_factor", "oos_fraction"} & set(patch):
