@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import Counter
 import os
 import sys
 import tempfile
@@ -131,6 +132,8 @@ def report(office) -> None:
         acts = dict(s.execute(select(Activity.agent, func.count(Activity.id)).group_by(Activity.agent)).all())
     infra = office.agent("infra")
     feed = infra.feed or {}
+    real = office.market.real
+    line(f"  Yahoo: {'sessão de navegador com crumb' if real._crumb else 'sem crumb'} · último erro: {real.last_error or 'nenhum'}")
     line(f"  Tito (TI): preços reais {'ok' if feed.get('ok') else 'FALHANDO'} · {len(feed.get('symbols') or {})} ativos conferidos · erros: {feed.get('errors') or 'nenhum'}")
     line(f"  Nina (notícias): {news} manchetes de {len(news_sources)} fontes {dict(sorted(news_sources.items(), key=lambda kv: -kv[1])[:6])}")
     line(f"  Hugo (calendário): {events} eventos econômicos · horários mapeados: {len(office.agent('schedule')._profiles)} ativos")
@@ -138,8 +141,15 @@ def report(office) -> None:
     if decisions:
         plan = decisions[0].plan or []
         line(f"  Gustavo (plano): {len(plan)} setup(s): " + "; ".join(f"{p['symbol']} {p['timeframe']} {p['strategy_name']} ({p.get('horizon')})" for p in plan))
+        line(f"    motivo: {(decisions[0].rationale or '')[:300]}")
     else:
         line("  Gustavo (plano): nenhuma decisão")
+    cands = office.agent("manager").build_candidates()
+    free = [c for c in cands if not c["blocked"]]
+    blocks = Counter(b.split("(")[0].strip() for c in cands for b in c["blocked"])
+    line(f"    candidatos: {len(cands)} · livres: {len(free)} · bloqueios: {dict(blocks)}")
+    for c in sorted(cands, key=lambda c: -c["score"])[:4]:
+        line(f"    - {c['symbol']} {c['timeframe']} {c['strategy_name']}: pontuação {c['score']} votos {c['votes']} {'BLOQUEADO ' + ', '.join(c['blocked']) if c['blocked'] else 'livre'}")
     risk = office.agent("risk").status()
     line(f"  Rita (risco): patrimônio {risk.get('equity')} · hoje {risk.get('day_pnl')} · limite do dia {risk.get('daily_loss_money')} · posições {risk.get('open_positions')}/{risk.get('max_positions')}")
     line(f"  Sinais: {signals or 'nenhum ainda (dependem de candle fechando no setup)'}")

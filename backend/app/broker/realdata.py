@@ -1,14 +1,15 @@
 """Dados reais e gratuitos do mercado, sem corretora (para a conta simulada).
 
-- **Cripto** (BTC, ETH, SOL...): API pública de dados da Binance, sem chave. Candles e o
-  melhor preço de compra e de venda do livro.
-- **Forex, ouro, prata, petróleo, índices e B3**: gráficos públicos do Yahoo Finance.
-  Índices americanos usam os contratos futuros (negociam quase 24 h, como os CFDs das
-  corretoras); o mini índice segue o Ibovespa e o mini dólar segue o dólar comercial.
+- **Cripto e ouro** (BTC, ETH, SOL..., ouro pelo PAX Gold): API pública da Binance, sem chave.
+- **Forex, índices, petróleo e B3**: gráficos públicos do Yahoo Finance (acessados como um
+  navegador, porque o Yahoo recusa outros clientes). O mini índice segue o Ibovespa e o mini
+  dólar segue o dólar comercial.
+- **Reservas**: forex pela Kraken (tempo real, histórico curto que cresce enquanto roda),
+  mini dólar pelo USDT/BRL da Binance, cripto e ouro pelo Yahoo.
 
 Os preços são de verdade; as ordens continuam simuladas, com o spread típico de uma
 corretora (o da tabela de cada ativo), slippage e comissão da conta simulada. Alguns
-futuros chegam no Yahoo com alguns minutos de atraso.
+tickers do Yahoo chegam com alguns minutos de atraso (veja ``Route.delay``).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import logging
 import math
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import httpx
 import numpy as np
@@ -26,15 +27,26 @@ import pandas as pd
 
 from app.broker.synthetic import PRESETS, Preset, open_mask, resample
 
+try:  # cliente com "cara" de navegador (TLS igual ao do Chrome): o Yahoo recusa os outros
+    from curl_cffi.requests import AsyncSession as BrowserSession
+except ImportError:  # pragma: no cover
+    BrowserSession = None
+
 log = logging.getLogger("metabot.realdata")
 
 YAHOO_HOSTS = ("https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com")
 BINANCE_HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+KRAKEN_HOSTS = ("https://api.kraken.com",)
+YAHOO_COOKIE_URL = "https://fc.yahoo.com"
+YAHOO_CRUMB_URL = "https://query1.finance.yahoo.com/v1/test/getcrumb"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 COLUMNS = ["time", "open", "high", "low", "close", "volume", "spread"]
 
 CRYPTO = ("BTC", "ETH", "SOL", "XRP", "LTC", "BNB", "ADA", "DOGE", "DOT", "AVAX", "LINK", "TRX", "BCH", "XLM", "ATOM", "UNI", "NEAR", "TON", "SHIB", "POL")
 FIAT = {"USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "BRL", "MXN", "ZAR", "SEK", "NOK", "TRY", "CNH", "SGD", "HKD", "PLN", "DKK"}
+# Pares de moedas negociados na Kraken (reserva em tempo real para o forex)
+KRAKEN_FX = {"EURUSD", "GBPUSD", "USDJPY", "USDCAD", "USDCHF", "AUDUSD", "EURGBP", "EURJPY", "EURCHF", "EURCAD", "AUDJPY"}
+KRAKEN_MINUTES = {60: 1, 300: 5, 900: 15, 1800: 30, 3600: 60, 14400: 240, 86400: 1440}
 
 # (prefixos do ativo na corretora, ticker no Yahoo, sessão, descrição, atraso do Yahoo em segundos)
 # Índices americanos: o índice à vista é em tempo real (só no pregão de Nova York); os futuros têm 10 min de atraso.
@@ -61,7 +73,7 @@ EXTRA_PRESETS: dict[str, Preset] = {
 }
 CANONICAL_BY_TICKER = {
     "^GSPC": "US500", "^DJI": "US30", "^NDX": "NAS100", "^GDAXI": "GER40", "^FTSE": "UK100", "^N225": "JP225",
-    "PAXGUSDT": "XAUUSD", "GC=F": "XAUUSD", "SI=F": "XAGUSD", "CL=F": "USOIL", "BZ=F": "UKOIL", "^BVSP": "WIN$N", "BRL=X": "WDO$N",
+    "PAXGUSDT": "XAUUSD", "GC=F": "XAUUSD", "SI=F": "XAGUSD", "CL=F": "USOIL", "BZ=F": "UKOIL", "^BVSP": "WIN$N", "BRL=X": "WDO$N", "USDTBRL": "WDO$N",
 }
 
 # Intervalos: segundos -> (Yahoo, período completo, período da atualização, Binance)
@@ -74,7 +86,8 @@ INTERVALS = {
     86400: ("1d", "10y", "3mo", "1d"),
 }
 REFRESH_SECONDS = {60: 15, 300: 20, 900: 30, 1800: 45, 3600: 60, 14400: 60, 86400: 600}
-TICK_TTL = {"binance": 3.0, "yahoo": 15.0}
+TICK_TTL = {"binance": 3.0, "kraken": 5.0, "yahoo": 15.0}
+LABELS = {"binance": "Binance", "kraken": "Kraken", "yahoo": "Yahoo Finance"}
 MAX_ROWS = 25000
 STALE_SECONDS = {"crypto": 15 * 60, "fx": 45 * 60, "index": 45 * 60, "b3": 45 * 60}
 
@@ -97,18 +110,26 @@ class RealDataError(Exception):
 
 @dataclass(frozen=True)
 class Route:
-    provider: str  # binance | yahoo
+    provider: str  # binance | yahoo | kraken
     ticker: str
     session: str  # fx | index | crypto | b3
     kind: str  # fx | crypto | metal | index | oil | b3 | stock | other
     scale: float = 1.0
-    fallback: str = ""  # ticker no Yahoo se a Binance falhar
+    backups: tuple[tuple[str, str], ...] = ()  # (fonte, ticker) usadas se a principal falhar
     description: str = ""
     delay: int = 0  # atraso conhecido da fonte (segundos)
 
     @property
     def label(self) -> str:
-        return f"{'Binance' if self.provider == 'binance' else 'Yahoo Finance'} ({self.ticker})"
+        return f"{LABELS.get(self.provider, self.provider)} ({self.ticker})"
+
+    def chain(self) -> list[Route]:
+        """A fonte principal e as reservas, nessa ordem."""
+        out = [self]
+        for provider, ticker in self.backups:
+            delay = 600 if ticker.endswith("=F") else self.delay if provider == "yahoo" else 0
+            out.append(replace(self, provider=provider, ticker=ticker, backups=(), delay=delay))
+        return out
 
 
 def _root(symbol: str) -> str:
@@ -122,20 +143,21 @@ def route_for(symbol: str) -> Route:
     if s.startswith(("WIN", "IND", "IBOV")):
         return Route("yahoo", "^BVSP", "b3", "b3", description="Mini Índice (segue o Ibovespa)", delay=900)
     if s.startswith(("WDO", "DOL")):
-        return Route("yahoo", "BRL=X", "b3", "b3", scale=1000.0, description="Mini Dólar (segue o dólar comercial)")
+        return Route("yahoo", "BRL=X", "b3", "b3", scale=1000.0, backups=(("binance", "USDTBRL"),), description="Mini Dólar (segue o dólar comercial)")
     if s.startswith(("XAU", "GOLD")):
         # PAX Gold (1 token = 1 onça de ouro) na Binance: tempo real; o futuro no Yahoo é a reserva
-        return Route("binance", "PAXGUSDT", "fx", "metal", fallback="GC=F", description="Ouro (PAXG, 1 onça)")
+        return Route("binance", "PAXGUSDT", "fx", "metal", backups=(("yahoo", "GC=F"),), description="Ouro (PAXG, 1 onça)")
     for prefixes, ticker, session, description, delay in YAHOO_ALIASES:
         if s.startswith(prefixes):
             kind = "metal" if ticker == "SI=F" else "oil" if ticker in ("CL=F", "BZ=F") else "index"
             return Route("yahoo", ticker, session, kind, description=description, delay=delay)
     for coin in sorted(CRYPTO, key=len, reverse=True):
         if letters.startswith(coin) and letters[len(coin):len(coin) + 3] in ("USD", ""):
-            return Route("binance", f"{coin}USDT", "crypto", "crypto", fallback=f"{coin}-USD", description=f"{coin} x Dólar")
+            return Route("binance", f"{coin}USDT", "crypto", "crypto", backups=(("yahoo", f"{coin}-USD"),), description=f"{coin} x Dólar")
     if len(letters) >= 6 and letters[:3] in FIAT and letters[3:6] in FIAT:
         pair = letters[:6]
-        return Route("yahoo", f"{pair}=X", "fx", "fx", description=f"{pair[:3]} x {pair[3:]}")
+        backups = (("kraken", pair),) if pair in KRAKEN_FX else ()
+        return Route("yahoo", f"{pair}=X", "fx", "fx", backups=backups, description=f"{pair[:3]} x {pair[3:]}")
     if re.fullmatch(r"[A-Z]{4}\d{1,2}F?", s):
         return Route("yahoo", f"{s.rstrip('F')}.SA", "b3", "stock", description=f"{s} (B3)", delay=900)
     return Route("yahoo", s, "index", "other", description=s, delay=900)
@@ -185,6 +207,10 @@ class RealMarket:
         self._sem = asyncio.Semaphore(4)
         self._backoff: dict[str, float] = {}
         self._warned: dict[str, float] = {}
+        self._browser = None
+        self._crumb = ""
+        self._crumb_at = 0.0
+        self._crumb_tried = 0.0
         self.last_ok: float | None = None
         self.last_error: str = ""
 
@@ -234,8 +260,87 @@ class RealMarket:
 
     # --------------------------------------------------------- yahoo
     async def _yahoo_chart(self, ticker: str, interval: str, range_: str) -> tuple[pd.DataFrame, dict]:
-        data = await self._get_json("yahoo", YAHOO_HOSTS, f"/v8/finance/chart/{ticker}", {"interval": interval, "range": range_, "includePrePost": "false"})
+        data = await self._yahoo_json(f"/v8/finance/chart/{ticker}", {"interval": interval, "range": range_, "includePrePost": "false"})
         return parse_yahoo(data, interval)
+
+    async def _yahoo_json(self, path: str, params: dict) -> object:
+        """Yahoo como um navegador: TLS do Chrome, cookie de sessão e o "crumb" que o site usa."""
+        if self._transport is not None or BrowserSession is None:
+            return await self._get_json("yahoo", YAHOO_HOSTS, path, params)  # testes (respostas falsas) ou sem curl_cffi
+        if time.time() < self._backoff.get("yahoo", 0):
+            raise RealDataError("yahoo: muitas consultas, aguardando um minuto")
+        last = ""
+        for attempt in range(2):
+            await self._yahoo_crumb(force=attempt > 0)
+            query = dict(params, crumb=self._crumb) if self._crumb else params
+            async with self._sem:
+                for host in YAHOO_HOSTS:
+                    try:
+                        res = await self._browser_session().get(host + path, params=query, timeout=20)
+                    except Exception as exc:  # erros de rede do curl
+                        last = exc.__class__.__name__
+                        continue
+                    if res.status_code == 429:
+                        self._backoff["yahoo"] = time.time() + 60
+                        raise RealDataError("yahoo: limite de consultas atingido (tentando de novo em 1 min)")
+                    if res.status_code in (401, 403):
+                        last = f"HTTP {res.status_code}"
+                        break  # cookie/crumb vencido: renova e tenta de novo
+                    if res.status_code >= 400:
+                        last = f"HTTP {res.status_code}"
+                        continue
+                    try:
+                        data = res.json()
+                    except ValueError:
+                        last = "resposta inválida"
+                        continue
+                    self.last_ok = time.time()
+                    self.last_error = ""
+                    return data
+            if not last.startswith("HTTP 40"):
+                break
+        self.last_error = f"yahoo: {last or 'sem resposta'}"
+        raise RealDataError(self.last_error)
+
+    def _browser_session(self):
+        if self._browser is None:
+            self._browser = BrowserSession(impersonate="chrome", timeout=20)
+        return self._browser
+
+    async def _yahoo_crumb(self, force: bool = False) -> None:
+        now = time.time()
+        if not force and (self._crumb and now - self._crumb_at < 6 * 3600 or now - self._crumb_tried < 300):
+            return
+        self._crumb_tried = now
+        session = self._browser_session()
+        try:
+            await session.get(YAHOO_COOKIE_URL, timeout=15)  # só cria o cookie de sessão (a resposta é 404 mesmo)
+        except Exception:
+            pass
+        try:
+            res = await session.get(YAHOO_CRUMB_URL, timeout=15)
+            text = (res.text or "").strip()
+            if res.status_code == 200 and 0 < len(text) < 64 and "<" not in text:
+                self._crumb, self._crumb_at = text, now
+        except Exception:
+            pass
+
+    # -------------------------------------------------------- kraken
+    async def _kraken(self, path: str, params: dict) -> object:
+        data = await self._get_json("kraken", KRAKEN_HOSTS, path, params)
+        if not isinstance(data, dict) or data.get("error"):
+            raise RealDataError(f"kraken: {(data or {}).get('error') if isinstance(data, dict) else 'resposta inválida'}")
+        return data.get("result") or {}
+
+    async def _kraken_ohlc(self, pair: str, seconds: int) -> pd.DataFrame:
+        if seconds not in KRAKEN_MINUTES:
+            raise RealDataError(f"kraken: tempo gráfico sem suporte ({seconds}s)")
+        result = await self._kraken("/0/public/OHLC", {"pair": pair, "interval": KRAKEN_MINUTES[seconds]})
+        rows = next((v for k, v in result.items() if k != "last"), [])  # type: ignore[union-attr]
+        if not rows:
+            raise RealDataError(f"Kraken sem dados de {pair}")
+        arr = np.array([[float(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[6])] for r in rows])
+        return pd.DataFrame({"time": arr[:, 0].astype(np.int64), "open": arr[:, 1], "high": arr[:, 2], "low": arr[:, 3], "close": arr[:, 4], "volume": arr[:, 5]})
 
     # ------------------------------------------------------- binance
     async def _binance_klines(self, pair: str, interval: str, limit: int, end_ms: int | None = None) -> pd.DataFrame:
@@ -253,11 +358,14 @@ class RealMarket:
             cached = self._frames.get(key)
             now = time.time()
             fresh = cached is not None and now - cached[0] < REFRESH_SECONDS.get(seconds, 60)
-            if fresh and (provider == "yahoo" or len(cached[1]) >= need):
+            if fresh and (provider != "binance" or len(cached[1]) >= need):
                 return cached[1]
             try:
                 if provider == "binance":
                     df = await self._load_binance(ticker, seconds, need, cached[1] if cached else None)
+                elif provider == "kraken":
+                    # a Kraken só devolve os 720 candles mais recentes: o histórico cresce enquanto o sistema roda
+                    df = merge_frames(cached[1] if cached else None, await self._kraken_ohlc(ticker, seconds))
                 else:
                     df = await self._load_yahoo(ticker, seconds, cached[1] if cached else None)
             except RealDataError as exc:
@@ -307,12 +415,15 @@ class RealMarket:
     # ---------------------------------------------------------- público
     async def rates(self, symbol: str, seconds: int, count: int) -> pd.DataFrame:
         route = route_for(symbol)
-        try:
-            df = await self._series(route, seconds, count)
-        except RealDataError:
-            if not route.fallback:
-                raise
-            df = await self._series(Route("yahoo", route.fallback, route.session, route.kind, delay=600), seconds, count)
+        errors = []
+        for option in route.chain():
+            try:
+                df = await self._series(option, seconds, count)
+                break
+            except RealDataError as exc:
+                errors.append(str(exc))
+        else:
+            raise RealDataError("; ".join(errors))
         df = df.copy().reset_index(drop=True)
         if route.scale != 1.0:
             for col in ("open", "high", "low", "close"):
@@ -323,7 +434,7 @@ class RealMarket:
 
     async def _series(self, route: Route, seconds: int, count: int) -> pd.DataFrame:
         base = 3600 if route.provider == "yahoo" and seconds == 14400 else seconds  # o Yahoo não tem 4 horas: junta candles de 1 hora
-        if base not in INTERVALS and not (route.provider == "binance" and base == 14400):
+        if base not in INTERVALS and not (route.provider in ("binance", "kraken") and base == 14400):
             raise RealDataError(f"tempo gráfico sem suporte: {seconds}s")
         df = await self._frame(route, base, count * (seconds // base) + 10)
         if base != seconds:
@@ -340,37 +451,45 @@ class RealMarket:
         cached = self._ticks.get(symbol)
         if cached and time.time() - cached[0] < TICK_TTL[route.provider]:
             return cached[1]
-        bid = ask = mid = None
-        last_time = time.time()
-        try:
-            if route.provider == "binance":
-                data = await self._get_json("binance", BINANCE_HOSTS, "/api/v3/ticker/bookTicker", {"symbol": route.ticker})
-                bid, ask = float(data["bidPrice"]), float(data["askPrice"])  # type: ignore[index]
-                mid = (bid + ask) / 2
-            else:
-                mid, last_time = await self._yahoo_price(route.ticker)
-        except (RealDataError, KeyError, TypeError, ValueError) as exc:
-            if route.fallback:
-                mid, last_time = await self._yahoo_price(route.fallback)
-            elif cached:
-                self._warn(f"tick:{symbol}", f"cotação de {symbol} sem atualizar ({exc})")
+        errors = []
+        for option in route.chain():
+            try:
+                bid, ask, last_time = await self._quote(option)
+                break
+            except (RealDataError, KeyError, TypeError, ValueError, StopIteration) as exc:
+                errors.append(str(exc) or exc.__class__.__name__)
+        else:
+            if cached:
+                self._warn(f"tick:{symbol}", f"cotação de {symbol} sem atualizar ({errors})")
                 return cached[1]
-            else:
-                raise RealDataError(f"sem cotação real de {symbol}: {exc}") from exc
-        mid = float(mid) * route.scale
+            raise RealDataError(f"sem cotação real de {symbol}: {'; '.join(errors)}")
+        mid = (bid + ask) / 2 * route.scale
+        real_spread = (ask - bid) * route.scale if option.provider != "yahoo" else 0.0
         spec = self._static_spec(symbol, route, mid)
-        half = max(spec["spread_points"] * spec["point"], (ask - bid) if bid and ask else 0.0) / 2
+        half = max(spec["spread_points"] * spec["point"], real_spread) / 2
         now = time.time()
-        is_open = bool(open_mask(route.session, np.array([int(now)]))[0]) and now - last_time <= STALE_SECONDS.get(route.session, 2700) + route.delay
+        is_open = bool(open_mask(route.session, np.array([int(now)]))[0]) and now - last_time <= STALE_SECONDS.get(route.session, 2700) + option.delay
         tick = {
             "bid": round(mid - half, spec["digits"]),
             "ask": round(mid + half, spec["digits"]),
             "time": int(last_time),
             "open": is_open,
-            "source": route.label,
+            "source": option.label,
         }
         self._ticks[symbol] = (time.time(), tick)
         return tick
+
+    async def _quote(self, route: Route) -> tuple[float, float, float]:
+        """(compra, venda, horário do último preço) na fonte indicada."""
+        if route.provider == "binance":
+            data = await self._get_json("binance", BINANCE_HOSTS, "/api/v3/ticker/bookTicker", {"symbol": route.ticker})
+            return float(data["bidPrice"]), float(data["askPrice"]), time.time()  # type: ignore[index]
+        if route.provider == "kraken":
+            result = await self._kraken("/0/public/Ticker", {"pair": route.ticker})
+            row = next(iter(result.values()))  # type: ignore[union-attr]
+            return float(row["b"][0]), float(row["a"][0]), time.time()
+        price, at = await self._yahoo_price(route.ticker)
+        return price, price, at
 
     async def _yahoo_price(self, ticker: str) -> tuple[float, float]:
         df, meta = await self._yahoo_chart(ticker, "1m", "1d")
@@ -389,12 +508,25 @@ class RealMarket:
         cached = self._rates_usd.get(currency)
         if cached and time.time() - cached[0] < 1800:
             return cached[1]
-        try:
-            price, _ = await self._yahoo_price(f"{currency}=X")
-        except RealDataError:
+        price = None
+        options = [("yahoo", f"{currency}=X", False)]
+        if f"USD{currency}" in KRAKEN_FX:
+            options.append(("kraken", f"USD{currency}", False))
+        elif f"{currency}USD" in KRAKEN_FX:
+            options.append(("kraken", f"{currency}USD", True))  # cotação invertida (EURUSD -> euros por dólar)
+        if currency == "BRL":
+            options.append(("binance", "USDTBRL", False))
+        for provider, ticker, invert in options:
+            try:
+                bid, ask, _ = await self._quote(Route(provider, ticker, "fx", "fx"))
+            except (RealDataError, KeyError, TypeError, ValueError, StopIteration):
+                continue
+            mid = (bid + ask) / 2
+            if mid > 0:
+                price = 1 / mid if invert else mid
+                break
+        if price is None:
             return cached[1] if cached else None
-        if price <= 0:
-            return None
         self._rates_usd[currency] = (time.time(), price)
         return price
 

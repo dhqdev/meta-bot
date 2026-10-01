@@ -86,6 +86,17 @@ class FakeApis:
                 return httpx.Response(200, json=binance_klines(params["symbol"], params["interval"], int(params["limit"]), end, self.now))
             if path.endswith("/bookTicker"):
                 return httpx.Response(200, json={"symbol": params["symbol"], "bidPrice": "64000.00", "bidQty": "1", "askPrice": "64000.01", "askQty": "1"})
+        if "kraken" in host:
+            pair = params["pair"]
+            key = {"EURUSD": "ZEURZUSD", "USDJPY": "ZUSDZJPY"}.get(pair, pair)
+            if path.endswith("/OHLC"):
+                sec = int(params["interval"]) * 60
+                end = int(self.now // sec) * sec
+                rows = [[end - (719 - i) * sec, "1.1000", "1.1010", "1.0990", f"{1.1 + 0.001 * math.sin(i / 20):.5f}", "1.1", "10.5", 3] for i in range(720)]
+                return httpx.Response(200, json={"error": [], "result": {key: rows, "last": end}})
+            if path.endswith("/Ticker"):
+                base = 150.0 if pair == "USDJPY" else 1.1
+                return httpx.Response(200, json={"error": [], "result": {key: {"a": [f"{base * 1.0001:.5f}", "1", "1.000"], "b": [f"{base:.5f}", "1", "1.000"], "c": [f"{base:.5f}", "0.1"]}}})
         if "yahoo" in host:
             if self.yahoo_status != 200:
                 return httpx.Response(self.yahoo_status, text="Too Many Requests")
@@ -105,11 +116,13 @@ def test_routes_for_broker_symbols():
     assert route_for("EURUSD").ticker == "EURUSD=X"
     assert route_for("EURUSDm").ticker == "EURUSD=X"  # sufixo da corretora
     gold = route_for("XAUUSD.a")
-    assert gold.ticker == "PAXGUSDT" and gold.fallback == "GC=F"  # ouro em tempo real; o futuro é a reserva
+    assert gold.ticker == "PAXGUSDT" and gold.backups == (("yahoo", "GC=F"),)  # ouro em tempo real; o futuro é a reserva
+    assert route_for("EURUSD").backups == (("kraken", "EURUSD"),)  # forex: a Kraken é a reserva em tempo real
+    assert route_for("WDO$N").backups == (("binance", "USDTBRL"),)
     assert route_for("US500").ticker == "^GSPC" and route_for("NAS100").ticker == "^NDX"
     assert route_for("EURUSD").delay == 0 and route_for("WIN$N").delay == 900  # o Ibovespa chega com 15 min de atraso
     btc = route_for("BTCUSD")
-    assert btc.provider == "binance" and btc.ticker == "BTCUSDT" and btc.fallback == "BTC-USD"
+    assert btc.provider == "binance" and btc.ticker == "BTCUSDT" and btc.backups == (("yahoo", "BTC-USD"),)
     assert route_for("WIN$N").ticker == "^BVSP"
     wdo = route_for("WDO$N")
     assert wdo.ticker == "BRL=X" and wdo.scale == 1000.0
@@ -217,7 +230,22 @@ def test_rate_limit_backs_off_and_keeps_last_history():
         df = await market.rates("EURUSD", 900, 300)  # usa o último histórico
         assert len(df) == 300
         with pytest.raises(RealDataError):
-            await market.rates("GBPUSD", 900, 300)  # nunca baixado e o Yahoo bloqueou
+            await market.rates("US500", 900, 300)  # nunca baixado, sem reserva e o Yahoo bloqueou
+
+    run(go())
+
+
+def test_forex_falls_back_to_kraken_when_yahoo_refuses():
+    api = FakeApis(yahoo_status=429)
+    market = RealMarket(transport=httpx.MockTransport(api))
+
+    async def go():
+        df = await market.rates("EURUSD", 300, 500)
+        assert len(df) == 500 and api.count("kraken", pair="EURUSD", interval="5") == 1
+        tick = await market.tick("EURUSD")
+        assert "Kraken" in tick["source"] and tick["ask"] > tick["bid"]
+        spec = await market.spec("USDJPY")  # valor do tick em dólar pela cotação da Kraken
+        assert spec["tick_value"] == pytest.approx(100 / (150 * 1.00005), rel=1e-3)
 
     run(go())
 
