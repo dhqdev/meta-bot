@@ -68,6 +68,14 @@ try {
   check(await page.getByText("Modelo de cada agente").isVisible(), "configurações de IA (OpenRouter, modelos fixos) visíveis");
   check(await page.getByText("Limite de perda do dia").first().isVisible(), "metas do dia nas configurações");
   check((await page.locator('input[placeholder^="sk-ant"]').count()) === 0, "sem opção de chave da Anthropic");
+  check(await page.getByText("Os 10 pares da equipe").isVisible(), "os 10 pares fixos nas configurações");
+
+  // Perfil rápido salva sozinho, mesmo saindo da tela logo depois (sem tocar em Salvar)
+  await page.getByText("Conservador", { exact: true }).click();
+  await page.click('header a[href="/agentes"]');
+  await page.waitForTimeout(1500);
+  const saved = await page.evaluate(async () => (await (await fetch("/api/settings")).json()).config);
+  check(saved.daily_loss_limit === 1.5 && saved.daily_profit_target === 1 && saved.risk_per_trade_pct === 0.25, "perfil de metas do dia fica salvo ao sair da tela");
 
   // Daily: botão para fazer a reunião agora e relatório gerado
   await page.click('header a[href="/daily"]');
@@ -87,6 +95,7 @@ try {
   await page.waitForTimeout(2000);
   check(!(await page.getByText("reconectando…").first().isVisible().catch(() => false)), "WebSocket conectado");
   check(await page.getByRole("button", { name: "Conversa", exact: true }).isVisible(), "aba Conversa no escritório");
+  check(await page.getByText("Mercado e operações hoje").isVisible(), "painel de mercado e operações do dia no escritório");
   const daily = await page.getByText("hora da daily").first().isVisible().catch(() => false);
   check(daily, "mensagens da equipe na conversa");
 

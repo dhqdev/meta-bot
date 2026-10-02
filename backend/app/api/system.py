@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app import __version__
 from app.api.auth import confirm_password
+from app.config import get_settings
+from app.core.market_hours import fx_status
 from app.deps import current_user, get_office
 from app.events import bus, record_activity
 from app.kv import kv_set
@@ -44,6 +49,120 @@ async def system(user: User = Depends(current_user), office=Depends(get_office))
         "plan": office.agent("manager").active_plan(),
         "plan_rationale": office.agent("manager").rationale,
         "office_break": office.break_info(),
+    }
+
+
+def _local(dt: datetime | str | None) -> str | None:
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        dt = datetime.fromisoformat(dt)
+    tz = ZoneInfo(get_settings().timezone)
+    local = dt.astimezone(tz)
+    days = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+    return f"{days[local.weekday()]} {local:%H:%M}"
+
+
+async def _symbol_open(office, symbol: str) -> bool | None:
+    try:
+        tick = await asyncio.wait_for(office.market.tick(symbol), timeout=6)
+        return bool(tick.get("open", True))
+    except Exception:
+        return None
+
+
+@router.get("/system/diagnostico")
+async def diagnostico(user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    """Por que a equipe está (ou não) operando hoje: mercado, plano, sinais e vetos, em português simples."""
+    from sqlalchemy import select
+
+    from app.db import session_scope
+    from app.models import Signal, Trade
+
+    cfg = get_config()
+    now = datetime.now(timezone.utc)
+    tz = ZoneInfo(get_settings().timezone)
+    day_start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    fx = fx_status(now)
+    opens = await asyncio.gather(*(_symbol_open(office, sym) for sym in cfg.watchlist))
+    symbols = [{"symbol": sym, "open": op} for sym, op in zip(cfg.watchlist, opens)]
+
+    manager = office.agent("manager")
+    strategist = office.agent("strategist")
+    approved = [p for p in strategist.ranking(only_approved=True, limit=1000) if p["symbol"] in cfg.watchlist and p["timeframe"] in cfg.timeframes]
+    approved_by_symbol = Counter(p["symbol"] for p in approved)
+    try:
+        cands = manager.build_candidates()
+    except Exception:
+        cands = []
+    blocked = Counter(b.split(" (")[0] for c in cands for b in c["blocked"])
+    plan = manager.active_plan()
+    risk = office.agent("risk").status()
+    with session_scope() as s:
+        sigs = list(s.scalars(select(Signal).where(Signal.ts >= day_start)))
+        sig_status = Counter(x.status for x in sigs)
+        vetoes = Counter((x.reason or "").split(" (")[0][:90] for x in sigs if x.status in ("vetado", "falhou", "cancelado", "expirado"))
+        trades = s.query(Trade).filter(Trade.entry_time >= day_start, Trade.mode == cfg.mode).count()
+
+    reasons: list[dict] = []
+
+    def add(level: str, text: str) -> None:
+        reasons.append({"level": level, "text": text})
+
+    brk = office.break_info()
+    if not cfg.system_running:
+        add("stop", f"Escritório em pausa depois da daily até {_local(brk['until'])}." if brk else "Escritório desligado: ninguém abre operação nova até você ligar (botão no topo).")
+    if not fx["open"]:
+        add("stop", f"Mercado de câmbio fechado agora. Reabre {_local(fx['next_change'])} (Brasília).")
+    elif fx["next_change_in_min"] is not None and fx["next_change_in_min"] <= 180:
+        add("info", f"Mercado de câmbio fecha {_local(fx['next_change'])} (Brasília); o Caio encerra as posições na sexta às 17:45 se “fechar antes do fim de semana” estiver ligado.")
+    if risk.get("kill_switch"):
+        add("stop", f"Trava geral ativa ({risk.get('kill_reason') or 'queda máxima'}): libere em Configurações.")
+    if risk.get("day_stop"):
+        add("stop", "Meta do dia batida: equipe parada até meia-noite." if risk["day_stop"] == "target" else "Limite de perda do dia atingido: equipe parada até meia-noite.")
+    if not approved:
+        add("warn", "Nenhuma estratégia aprovada nos pares ainda: a Estela está testando (só entra no plano o que passa no teste e na prova).")
+    elif not plan and cands and all(c["blocked"] for c in cands):
+        top = ", ".join(f"{k} ({v})" for k, v in blocked.most_common(3))
+        add("warn", f"Todos os candidatos estão bloqueados agora: {top}.")
+    elif not plan and cfg.system_running:
+        add("info", "O Gustavo ainda não montou o plano desta rodada.")
+    if plan and not sigs and fx["open"]:
+        add("info", "Plano ativo, mas nenhuma estratégia deu sinal de entrada hoje: o mercado não mostrou a oportunidade que elas esperam.")
+    n_vetoed = sum(vetoes.values())
+    if n_vetoed:
+        top = "; ".join(f"{k} ({v}×)" for k, v in vetoes.most_common(3))
+        add("warn", f"{n_vetoed} sinal(is) barrado(s) hoje. Principais motivos: {top}.")
+    if trades:
+        add("ok", f"{trades} operação(ões) aberta(s) hoje.")
+    if not reasons:
+        add("ok", "Tudo liberado: a equipe está esperando um sinal das estratégias do plano.")
+
+    return {
+        "now": now.isoformat(),
+        "now_local": _local(now),
+        "running": cfg.system_running,
+        "fx": {**fx, "next_change_local": _local(fx["next_change"])},
+        "symbols": [{**x, "approved": approved_by_symbol.get(x["symbol"], 0)} for x in symbols],
+        "funnel": {
+            "approved": len(approved),
+            "candidates": len(cands),
+            "blocked": sum(1 for c in cands if c["blocked"]),
+            "plan": len(plan),
+            "signals": len(sigs),
+            "signals_by_status": dict(sig_status),
+            "trades": trades,
+        },
+        "blocked_reasons": dict(blocked.most_common(5)),
+        "veto_reasons": dict(vetoes.most_common(5)),
+        "reasons": reasons,
+        "schedule": {
+            "fx_hours": "domingo 19:00 até sexta 18:00 (Brasília)",
+            "weekend_close": "sexta 17:45 (Brasília)" if cfg.close_before_weekend else None,
+            "daily": cfg.daily_meeting_time if cfg.daily_meeting_enabled else None,
+            "daily_break_minutes": cfg.daily_break_minutes,
+            "min_hour_quality": cfg.min_hour_quality,
+        },
     }
 
 

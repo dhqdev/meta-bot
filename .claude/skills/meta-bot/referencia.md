@@ -105,6 +105,7 @@ Segredos (criptografados): `openrouter_api_key` e credenciais de terminais.
 
 - **Metas do dia:** `daily_loss_limit` + `daily_loss_unit` (percent|money), `daily_profit_target` + `daily_profit_unit`, `close_on_daily_limit`.
 - **Risco (Rita):** `risk_per_trade_pct`, `max_drawdown_pct`, `max_open_positions`, `max_positions_per_symbol`, `max_currency_exposure`, `max_spread_multiplier`, `adaptive_risk`, `min_lot_overrisk`.
+- **Ativos:** os 10 pares fixos `TRADING_PAIRS` (`runtime.py`); a tela só muda `symbol_suffix` (a API recusa outra `watchlist`). A Nina só guarda notícias das moedas deles (`news.watched_codes`).
 - **Estratégias (Estela):** `watchlist`, `timeframes`, `enabled_strategies`, `rank_by`, `min_trades`, `min_profit_factor`, `oos_fraction`, `ranking_interval_hours`, `evolution_enabled`, `evolution_interval_hours`.
 - **Gerente (Gustavo):** `decision_interval_minutes`, `max_active_setups`, `min_hour_quality`, `use_news_filter`, `news_block_threshold`, `position_review_minutes` (revisão das posições abertas; 0 = desligada), `ai_plan_refresh_minutes`.
 - **Caixa (Caio):** `break_even_r`, `trailing_start_r`, `trailing_atr_mult`, `adaptive_exits`, `max_bars_in_trade`, `close_before_weekend`, `b3_close_time`, `b3_prefixes`.

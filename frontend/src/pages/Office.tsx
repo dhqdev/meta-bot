@@ -79,6 +79,7 @@ export function OfficePage() {
             <DayGoals />
             <DailyTeaser />
           </div>
+          <MarketToday />
           {open.data && open.data.length > 0 && (
             <Card title="Posições abertas" pad={false}>
               <div className="divide-y divide-line">
@@ -125,6 +126,63 @@ export function OfficePage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/** Por que a equipe está (ou não) operando: horário do câmbio, plano, sinais e vetos de hoje. */
+function MarketToday() {
+  const q = useQuery({ queryKey: ["diagnostico"], queryFn: () => api.get<any>("/api/system/diagnostico"), refetchInterval: 60000 });
+  const d = q.data;
+  if (!d) return null;
+  const tone: Record<string, string> = {
+    stop: "border-red-500/30 bg-red-500/10 text-red-100",
+    warn: "border-amber-500/30 bg-amber-500/10 text-amber-100",
+    info: "border-sky-500/30 bg-sky-500/10 text-sky-100",
+    ok: "border-emerald-500/30 bg-emerald-500/10 text-emerald-100",
+  };
+  const f = d.funnel;
+  const steps: Array<[string, number]> = [
+    ["estratégias aprovadas", f.approved],
+    ["candidatos livres", f.candidates - f.blocked],
+    ["no plano agora", f.plan],
+    ["sinais hoje", f.signals],
+    ["operações hoje", f.trades],
+  ];
+  return (
+    <Card
+      title="Mercado e operações hoje"
+      actions={<Badge tone={d.fx.open ? "green" : "red"}>{d.fx.open ? `câmbio aberto · fecha ${d.fx.next_change_local ?? ""}` : `câmbio fechado · abre ${d.fx.next_change_local ?? ""}`}</Badge>}
+    >
+      <div className="space-y-1.5">
+        {d.reasons.map((r: any, i: number) => (
+          <div key={i} className={clsx("rounded-lg border px-3 py-2 text-sm", tone[r.level] ?? tone.info)}>
+            {r.text}
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-5 gap-1 text-center">
+        {steps.map(([label, n]) => (
+          <div key={label} className="rounded-md border border-line bg-ink/30 px-1 py-1.5">
+            <div className="text-base font-semibold tabular-nums text-slate-100">{n}</div>
+            <div className="text-[10px] leading-tight text-muted">{label}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {d.symbols.map((x: any) => (
+          <span key={x.symbol} title={x.open === false ? "fechado agora" : x.open ? "aberto" : "sem cotação"} className="flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-[11px] text-slate-300">
+            <span className={clsx("h-1.5 w-1.5 rounded-full", x.open ? "bg-emerald-400" : x.open === false ? "bg-red-400" : "bg-slate-500")} />
+            {x.symbol}
+            <span className="text-muted">· {x.approved}</span>
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-snug text-muted">
+        Câmbio: {d.schedule.fx_hours}. {d.schedule.weekend_close ? `Posições fechadas ${d.schedule.weekend_close}. ` : ""}
+        {d.schedule.daily ? `Daily às ${d.schedule.daily}${d.schedule.daily_break_minutes ? `, com ${d.schedule.daily_break_minutes} min de pausa` : ""}. ` : ""}
+        O número ao lado de cada par é quantas estratégias aprovadas ele tem.
+      </p>
+    </Card>
   );
 }
 

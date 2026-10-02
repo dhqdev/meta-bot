@@ -116,4 +116,19 @@ def test_old_config_is_migrated():
     reset_cache()
     cfg = get_config()
     assert cfg.daily_loss_limit == 4.5 and cfg.daily_loss_unit == "percent"
-    assert cfg.timeframes == ["M5", "H1", "H4"] and cfg.config_version == 2
+    assert cfg.timeframes == ["M5", "H1", "H4"] and cfg.config_version == 3
+
+
+def test_v3_keeps_only_the_ten_pairs_with_the_broker_suffix():
+    from app.kv import kv_set
+    from app.runtime import TRADING_PAIRS, get_config, reset_cache
+
+    feeds = [{"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "enabled": True},
+             {"name": "Minha fonte", "url": "https://exemplo.com/rss", "enabled": True}]
+    kv_set("runtime_config", {"config_version": 2, "watchlist": ["EURUSDm", "XAUUSDm", "BTCUSD"], "news_feeds": feeds,
+                              "daily_loss_limit": 1.5, "daily_profit_target": 1})
+    reset_cache()
+    cfg = get_config()
+    assert cfg.watchlist == [p + "m" for p in TRADING_PAIRS] and cfg.symbol_suffix == "m"
+    assert [f.enabled for f in cfg.news_feeds] == [False, True]
+    assert (cfg.daily_loss_limit, cfg.daily_profit_target) == (1.5, 1)

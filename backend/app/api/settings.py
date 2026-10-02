@@ -16,7 +16,7 @@ from app.deps import current_user, get_office
 from app.events import record_activity
 from app.kv import secret_get, secret_set
 from app.models import Terminal, User
-from app.runtime import TIMEFRAMES, RuntimeConfig, get_config, update_config
+from app.runtime import TIMEFRAMES, TRADING_PAIRS, RuntimeConfig, get_config, pair_symbols, update_config
 from app.security import box, mask
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -26,7 +26,7 @@ PROTECTED = {"mode", "system_running"}
 
 # Nomes em português para as mensagens de erro (os mesmos da tela de Configurações)
 FIELD_LABELS = {
-    "watchlist": "Ativos", "timeframes": "Tempos gráficos", "enabled_strategies": "Estratégias ligadas",
+    "watchlist": "Ativos", "symbol_suffix": "Sufixo da corretora", "timeframes": "Tempos gráficos", "enabled_strategies": "Estratégias ligadas",
     "daily_loss_limit": "Limite de perda do dia", "daily_loss_unit": "Unidade do limite de perda",
     "daily_profit_target": "Meta de ganho do dia", "daily_profit_unit": "Unidade da meta de ganho",
     "risk_per_trade_pct": "Risco por operação", "max_drawdown_pct": "Queda máxima desde o pico",
@@ -86,7 +86,7 @@ def get_settings_view(user: User = Depends(current_user), office=Depends(get_off
     return {
         "config": cfg.model_dump(mode="json"),
         "defaults": RuntimeConfig().model_dump(mode="json"),
-        "options": {"timeframes": TIMEFRAMES},
+        "options": {"timeframes": TIMEFRAMES, "pairs": TRADING_PAIRS},
         "ai": {
             **office.llm.status(),
             "key_masked": mask(stored or env_key),
@@ -102,6 +102,14 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
     blocked = PROTECTED & set(patch)
     if blocked:
         raise HTTPException(status_code=400, detail=f"Use as rotas próprias para: {', '.join(sorted(blocked))}.")
+    patch = dict(patch)
+    if "watchlist" in patch:
+        current = get_config()
+        if patch["watchlist"] != current.watchlist:
+            raise HTTPException(status_code=400, detail="Ativos: a equipe trabalha só com os 10 pares fixos. Mude apenas o sufixo da corretora, se precisar.")
+        patch.pop("watchlist")
+    if "symbol_suffix" in patch:
+        patch["watchlist"] = pair_symbols(str(patch["symbol_suffix"] or "").strip())
     try:
         cfg = update_config(patch)
     except ValidationError as exc:

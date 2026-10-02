@@ -83,7 +83,8 @@ Antes de dar algo por pronto: testes do backend, `npm run build` (typecheck) e, 
 ## Armadilhas conhecidas
 
 - `Base.metadata.create_all` cria **tabelas novas**, mas **não adiciona colunas** em tabelas que já existem no Postgres de produção. Prefira tabela nova ou guardar em JSON/kv; coluna nova exige migração manual.
-- Configuração editável mora no kv (`runtime_config`) e é validada por `RuntimeConfig` (`backend/app/runtime.py`). Mudou o formato? Suba `CONFIG_VERSION` e converta em `_migrate`.
+- Configuração editável mora no kv (`runtime_config`) e é validada por `RuntimeConfig` (`backend/app/runtime.py`). Mudou o formato? Suba `CONFIG_VERSION` e converta em `_migrate`. A tela de Configurações **salva sozinha** (~1 s depois da mudança e ao sair da tela); campo recusado aparece no rodapé e não é reenviado até mudar.
+- "Por que não operou?": `GET /api/system/diagnostico` (painel *Mercado e operações hoje* no escritório) junta horário do câmbio (`core/market_hours.py`, fecha sexta 18h e abre domingo 19h de Brasília), estratégias aprovadas, candidatos bloqueados, plano, sinais e vetos do dia.
 - Horários: o banco guarda UTC; a tela e a daily usam `MB_TIMEZONE` (America/Sao_Paulo). Comparações de validade (ex.: `team.avoid_hours[...]["until"]`) são strings ISO em UTC.
 - Preços reais dependem de APIs públicas sem garantia (Yahoo pode responder 429). `RealMarket` faz cache incremental, recua 1 min no 429 e usa o último histórico; nunca misture preço simulado com real numa mesma série. O ambiente de nuvem do Claude Code pode bloquear Yahoo/Binance: a prova ao vivo é o workflow **Verificação com preços reais** no GitHub Actions.
 - O servidor de produção é **ARM**: imagens multi-arch (backend e frontend). O MT5 **não roda na stack**; fica num PC/VPS Windows com o bridge, ligado por Tailscale (`MB_MT5_BRIDGE_URL` + `MB_MT5_BRIDGE_TOKEN`).

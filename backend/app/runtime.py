@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import re
 import threading
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 TIMEFRAMES = ["M5", "M15", "M30", "H1", "H4", "D1"]
 TIMEFRAME_SECONDS = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800, "H1": 3600, "H4": 14400, "D1": 86400}
 
 FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+
+# Os 10 pares de moedas com que a equipe trabalha (nada mais, nada menos): notícias, calendário,
+# estratégias e operações giram só em torno deles. Na corretora o nome pode ter sufixo (EURUSDm).
+TRADING_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP"]
 
 
 class NewsFeed(BaseModel):
@@ -26,13 +31,20 @@ DEFAULT_FEEDS = [
     NewsFeed(name="CNBC Markets", url="https://www.cnbc.com/id/15839069/device/rss/rss.html"),
     NewsFeed(name="MarketWatch", url="https://feeds.content.dowjones.io/public/rss/mw_topstories"),
     NewsFeed(name="Yahoo Finance", url="https://finance.yahoo.com/news/rssindex"),
-    NewsFeed(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/"),
-    NewsFeed(name="InfoMoney", url="https://www.infomoney.com.br/feed/", lang="pt"),
-    NewsFeed(name="Money Times", url="https://www.moneytimes.com.br/feed/", lang="pt"),
-    NewsFeed(name="Investing.com Brasil", url="https://br.investing.com/rss/news.rss", lang="pt"),
+    # cripto e mercado brasileiro: fora dos 10 pares, ficam desligadas (dá para religar na tela)
+    NewsFeed(name="CoinDesk", url="https://www.coindesk.com/arc/outboundfeeds/rss/", enabled=False),
+    NewsFeed(name="InfoMoney", url="https://www.infomoney.com.br/feed/", lang="pt", enabled=False),
+    NewsFeed(name="Money Times", url="https://www.moneytimes.com.br/feed/", lang="pt", enabled=False),
+    NewsFeed(name="Investing.com Brasil", url="https://br.investing.com/rss/news.rss", lang="pt", enabled=False),
 ]
+OFF_PAIR_FEEDS = {f.url for f in DEFAULT_FEEDS if not f.enabled}
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
+
+
+def pair_symbols(suffix: str = "") -> list[str]:
+    """Os 10 pares com o sufixo da corretora (EURUSD + "m" = EURUSDm)."""
+    return [p + suffix for p in TRADING_PAIRS]
 
 
 class RuntimeConfig(BaseModel):
@@ -44,8 +56,9 @@ class RuntimeConfig(BaseModel):
     # auto = MT5 quando conectado; senão, preços reais públicos (Yahoo/Binance); sem internet, o simulado
     data_source: Literal["auto", "mt5", "real", "synthetic"] = "auto"
 
-    # --- Ativos
-    watchlist: list[str] = Field(default_factory=lambda: ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "US500", "BTCUSD"])
+    # --- Ativos: os 10 pares fixos (a tela só muda o sufixo da corretora)
+    watchlist: list[str] = Field(default_factory=pair_symbols)
+    symbol_suffix: str = Field("", max_length=12)
     # M5 = operações curtas (scalper); M15/H1 = day trade; H4 = posições mais longas
     timeframes: list[str] = Field(default_factory=lambda: ["M5", "M15", "H1", "H4"])
     enabled_strategies: list[str] = Field(default_factory=list)  # vazio = todas
@@ -144,6 +157,14 @@ class RuntimeConfig(BaseModel):
             raise ValueError("no máximo 30 ativos")
         return out
 
+    @field_validator("symbol_suffix")
+    @classmethod
+    def _clean_suffix(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9._#$-]*", value):
+            raise ValueError("só letras, números e . _ - # $ (ex.: m, .a, -ECN)")
+        return value
+
     @field_validator("timeframes")
     @classmethod
     def _clean_timeframes(cls, value: list[str]) -> list[str]:
@@ -186,16 +207,32 @@ def get_config() -> RuntimeConfig:
                 _cache = RuntimeConfig.model_validate(stored)
             except Exception:
                 # Campo inválido salvo por uma versão antiga: mantém o que for válido.
-                base = RuntimeConfig().model_dump()
-                for k, v in stored.items():
-                    trial = dict(base, **{k: v})
-                    try:
-                        RuntimeConfig.model_validate(trial)
-                        base = trial
-                    except Exception:
-                        continue
-                _cache = RuntimeConfig.model_validate(base)
+                _cache = _keep_valid(stored)
         return _cache
+
+
+def _keep_valid(stored: dict) -> RuntimeConfig:
+    """Descarta só os campos que a validação recusou (antes, um campo ruim podia levar junto as metas do dia)."""
+    trial = {k: v for k, v in stored.items() if k in RuntimeConfig.model_fields}
+    for _ in range(len(trial) + 1):
+        try:
+            return RuntimeConfig.model_validate(trial)
+        except ValidationError as exc:
+            bad = {str(e["loc"][0]) for e in exc.errors() if e.get("loc")}
+            if not bad & set(trial):
+                break
+            for k in bad:
+                trial.pop(k, None)
+    base = RuntimeConfig().model_dump()
+    # unidades antes dos valores: "500" de perda só vale junto com a unidade "money"
+    for k, v in sorted(stored.items(), key=lambda kv: not kv[0].endswith("_unit")):
+        trial = dict(base, **{k: v})
+        try:
+            RuntimeConfig.model_validate(trial)
+            base = trial
+        except Exception:
+            continue
+    return RuntimeConfig.model_validate(base)
 
 
 def _migrate(stored: dict) -> dict:
@@ -208,6 +245,23 @@ def _migrate(stored: dict) -> dict:
         tfs = list(stored.get("timeframes") or [])
         if tfs and "M5" not in tfs:
             stored["timeframes"] = ["M5", *tfs]
+        stored["config_version"] = 2
+    if int(stored.get("config_version") or 1) < 3:
+        # v3: só os 10 pares fixos; aproveita o sufixo da corretora que já estava em uso (EURUSDm -> "m")
+        suffix = ""
+        for sym in stored.get("watchlist") or []:
+            sym = str(sym).strip()
+            for pair in TRADING_PAIRS:
+                if sym.upper().startswith(pair) and len(sym) > len(pair):
+                    suffix = sym[len(pair):]
+                    break
+            if suffix:
+                break
+        stored["symbol_suffix"] = suffix
+        stored["watchlist"] = pair_symbols(suffix)
+        feeds = stored.get("news_feeds")
+        if isinstance(feeds, list):
+            stored["news_feeds"] = [dict(f, enabled=False) if isinstance(f, dict) and f.get("url") in OFF_PAIR_FEEDS else f for f in feeds]
         stored["config_version"] = CONFIG_VERSION
     for old in ("max_daily_loss_pct", "ai_provider", "ai_model", "ai_news_model", "ai_auditor_model", "openrouter_manager_model",
                 "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model"):

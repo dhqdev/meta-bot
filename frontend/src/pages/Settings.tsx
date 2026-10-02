@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import clsx from "clsx";
 import { ChevronDown, ExternalLink, Lock, Plus, RotateCcw, Save, Trash2, Undo2 } from "lucide-react";
 import QRCode from "qrcode";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, ErrorBox, Field, Input, Loading, PasswordPrompt, Select, Switch } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -208,6 +208,54 @@ export function SettingsPage() {
   useEffect(() => {
     if (q.data && !draft) setDraft(q.data.config);
   }, [q.data, draft]);
+  const server: Cfg = q.data?.config ?? {};
+  const changedKeys = draft ? Object.keys(draft).filter((k) => JSON.stringify(draft[k]) !== JSON.stringify(server[k]) && k !== "mode" && k !== "system_running") : [];
+  const changedSig = changedKeys.map((k) => `${k}=${JSON.stringify(draft?.[k])}`).join("&");
+  // o que ainda não foi salvo, para salvar ao sair da tela (navegar ou fechar o app)
+  const pending = useRef<Cfg | null>(null);
+  pending.current = changedKeys.length && draft ? Object.fromEntries(changedKeys.map((k) => [k, draft[k]])) : null;
+  const failed = useRef<string | null>(null); // não insiste no mesmo valor recusado; tenta de novo quando ele mudar
+
+  const save = async (patch: Cfg) => {
+    setSaving(true);
+    try {
+      const res = await api.put<any>("/api/settings", patch);
+      qc.setQueryData(["settings"], (old: any) => (old ? { ...old, config: res.config } : old));
+      // a resposta pode normalizar o valor (ex.: 7:5 → 07:05); só troca o que não mudou enquanto salvava
+      setDraft((d) => {
+        const next = { ...(d ?? {}) };
+        for (const k of Object.keys(patch)) if (JSON.stringify(next[k]) === JSON.stringify(patch[k])) next[k] = res.config[k];
+        return next;
+      });
+      setError(null);
+      setSaved(true);
+      void qc.invalidateQueries({ queryKey: ["settings"] });
+    } catch (e) {
+      failed.current = changedSig;
+      setError(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Salva sozinho pouco depois da última mudança (não se perde ao trocar de tela)
+  useEffect(() => {
+    if (!changedSig || saving || changedSig === failed.current) return;
+    const t = setTimeout(() => pending.current && void save(pending.current), 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changedSig, saving]);
+  useEffect(() => {
+    const flush = () => {
+      if (pending.current) void fetch("/api/settings", { method: "PUT", credentials: "same-origin", keepalive: true, headers: { "Content-Type": "application/json" }, body: JSON.stringify(pending.current) });
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      if (pending.current) void api.put("/api/settings", pending.current).then(() => qc.invalidateQueries({ queryKey: ["settings"] })).catch(() => undefined);
+    };
+  }, [qc]);
+
   if (q.isLoading || !draft) return <Loading />;
   const cfg = draft;
   const defaults: Cfg = q.data.defaults;
@@ -221,36 +269,19 @@ export function SettingsPage() {
     setSaved(false);
     setError(null);
   };
-  const changedKeys = Object.keys(cfg).filter((k) => JSON.stringify(cfg[k]) !== JSON.stringify(q.data.config[k]) && k !== "mode" && k !== "system_running");
-  const save = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      const patch: Cfg = {};
-      for (const k of changedKeys) patch[k] = cfg[k];
-      const res = await api.put<any>("/api/settings", patch);
-      setDraft(res.config);
-      await qc.invalidateQueries({ queryKey: ["settings"] });
-      setSaved(true);
-    } catch (e) {
-      setError(e);
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <div className="space-y-4 pb-24">
       <div>
         <h1 className="font-pixel text-sm text-gold">CONFIGURAÇÕES</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          O essencial fica aqui em cima. Os <b className="text-slate-300">ajustes finos</b> de cada agente já vêm calibrados e a equipe se ajusta sozinha na daily — só mexa se quiser. Tudo vale na hora, sem reiniciar.
+          O essencial fica aqui em cima. Os <b className="text-slate-300">ajustes finos</b> de cada agente já vêm calibrados e a equipe se ajusta sozinha na daily — só mexa se quiser. Cada mudança é <b className="text-slate-300">salva sozinha</b> e vale na hora, sem reiniciar.
         </p>
       </div>
 
       <ModeCard />
       <GoalsCard cfg={cfg} set={set} setMany={setMany} defaults={defaults} />
-      <MarketsCard cfg={cfg} set={set} />
+      <MarketsCard cfg={cfg} set={set} pairs={q.data.options?.pairs ?? []} />
       <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
         <DailyCard cfg={cfg} set={set} />
         <AICard cfg={cfg} set={set} ai={q.data.ai} />
@@ -273,24 +304,18 @@ export function SettingsPage() {
         <div className="fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-20 flex justify-center px-3 lg:bottom-4">
           <div className="flex max-w-full flex-wrap items-center gap-2 rounded-xl border border-line bg-panel px-3 py-2 shadow-2xl shadow-black/50">
             {error ? (
-              <ErrorBox error={error} />
+              <>
+                <ErrorBox error={error} />
+                <Button variant="ghost" onClick={() => setDraft(q.data.config)}>
+                  <Undo2 className="h-4 w-4" /> Voltar ao que estava salvo
+                </Button>
+                <Button onClick={() => pending.current && void save(pending.current)} loading={saving} disabled={!changedKeys.length}>
+                  <Save className="h-4 w-4" /> Tentar de novo
+                </Button>
+              </>
             ) : (
-              <span className="text-sm text-muted">{saved && !changedKeys.length ? "Salvo ✓ — a equipe já está usando" : `${changedKeys.length} alteração(ões) não salva(s)`}</span>
+              <span className="text-sm text-muted">{changedKeys.length || saving ? "Salvando…" : "Salvo ✓ — a equipe já está usando"}</span>
             )}
-            {changedKeys.length > 0 && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setDraft(q.data.config);
-                  setError(null);
-                }}
-              >
-                <Undo2 className="h-4 w-4" /> Descartar
-              </Button>
-            )}
-            <Button onClick={save} loading={saving} disabled={!changedKeys.length}>
-              <Save className="h-4 w-4" /> Salvar
-            </Button>
           </div>
         </div>
       )}
@@ -479,7 +504,7 @@ function GoalsCard({ cfg, set, setMany, defaults }: { cfg: Cfg; set: Setter; set
             </button>
           ))}
         </div>
-        <p className="mt-2 text-[11px] text-muted">O perfil só preenche os campos abaixo — confira e toque em Salvar.</p>
+        <p className="mt-2 text-[11px] text-muted">Tocou no perfil, ele já fica salvo. Depois dá para ajustar cada campo abaixo.</p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
@@ -536,13 +561,25 @@ const SIMPLE_FIELDS: Record<string, FieldDef> = {
   ai_max_calls_per_hour: { key: "ai_max_calls_per_hour", label: "Máximo de chamadas por hora", int: true, min: 0, max: 500, hint: "Segurança extra contra gasto inesperado." },
 };
 
-function MarketsCard({ cfg, set }: { cfg: Cfg; set: Setter }) {
+function MarketsCard({ cfg, set, pairs }: { cfg: Cfg; set: Setter; pairs: string[] }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<any>("/api/strategies") });
   return (
     <Card title="O que a equipe opera">
       <div className="grid gap-4 lg:grid-cols-2">
-        <Field label="Ativos (nome exato na sua corretora)" hint="Ex.: EURUSD, XAUUSD, US500, BTCUSD, WIN$N. Cada corretora tem sufixos próprios (EURUSDm, EURUSD.a…): confira no MT5.">
-          <WatchlistEditor value={cfg.watchlist} onChange={(v) => set("watchlist", v)} />
+        <Field label="Os 10 pares da equipe" hint="Fixos: notícias, calendário, estratégias e operações giram só em torno deles. Nada mais, nada menos.">
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            {pairs.map((p) => (
+              <Badge key={p} tone="blue" className="text-xs">
+                {p}
+                {cfg.symbol_suffix ? <span className="text-sky-200/70">{cfg.symbol_suffix}</span> : null}
+              </Badge>
+            ))}
+          </div>
+          <div className="max-w-xs">
+            <Field label="Sufixo da corretora (se houver)" hint="Algumas corretoras chamam o EURUSD de EURUSDm, EURUSD.a… Coloque só o final (m, .a). Vazio = nome normal.">
+              <Input value={cfg.symbol_suffix ?? ""} placeholder="vazio" onChange={(e) => set("symbol_suffix", e.target.value.trim())} />
+            </Field>
+          </div>
         </Field>
         <Field label="Tempos gráficos" hint="A Estela testa as estratégias em cada um. M5 = operações de minutos (scalper); H4/D1 = segura por dias. A equipe compara os estilos e passa a preferir o que dá mais resultado.">
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
@@ -705,43 +742,6 @@ function AICard({ cfg, set, ai }: { cfg: Cfg; set: Setter; ai: any }) {
         }}
       />
     </Card>
-  );
-}
-
-function WatchlistEditor({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
-  const [text, setText] = useState("");
-  const search = useQuery({ queryKey: ["symbols", text], queryFn: () => api.get<any[]>(`/api/market/symbols?q=${encodeURIComponent(text)}`), enabled: text.length >= 2 });
-  const add = (s: string) => {
-    const sym = s.trim();
-    if (sym && !value.includes(sym)) onChange([...value, sym]);
-    setText("");
-  };
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap gap-1.5">
-        {value.map((s) => (
-          <Badge key={s} tone="blue" className="text-xs">
-            {s}
-            <button type="button" onClick={() => onChange(value.filter((x) => x !== s))} className="ml-1 text-sky-200 hover:text-white" aria-label={`Remover ${s}`}>
-              ×
-            </button>
-          </Badge>
-        ))}
-      </div>
-      <div className="flex gap-2">
-        <Input value={text} onChange={(e) => setText(e.target.value.toUpperCase())} list="wl-symbols" placeholder="Buscar ou digitar o ativo" onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), add(text))} />
-        <datalist id="wl-symbols">
-          {search.data?.map((s) => (
-            <option key={s.name} value={s.name}>
-              {s.description}
-            </option>
-          ))}
-        </datalist>
-        <Button type="button" variant="ghost" onClick={() => add(text)} aria-label="Adicionar ativo">
-          <Plus className="h-4 w-4" />
-        </Button>
-      </div>
-    </div>
   );
 }
 
