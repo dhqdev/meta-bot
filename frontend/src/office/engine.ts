@@ -6,8 +6,8 @@
 //   com fonte legível em qualquer tamanho (não encolhe junto com o cenário).
 import { buildGrid, COLS, DESK_SPOTS, HEIGHT, LOCATION_SPOTS, MEETING_HOST, ROWS, T, WANDER, WIDTH, tileCenter, type Spot } from "./map";
 import { findPath, nearestFree, type Tile } from "./path";
-import { buildDrawables, pixelText, renderBackground, renderLighting, renderWall, type Drawable, type OfficeInfo } from "./scenery";
-import { characterSprite, type Dir, type Pose } from "./sprites";
+import { buildDrawables, DETAIL, pixelText, renderBackground, renderLighting, renderWall, type Drawable, type OfficeInfo } from "./scenery";
+import { characterSprite, SPRITE_H, SPRITE_W, type Dir, type Mood, type Pose } from "./sprites";
 
 export interface AgentView {
   id: string;
@@ -513,7 +513,7 @@ export class OfficeEngine {
     const t = now();
     ctx.setTransform(k, 0, 0, k, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(this.background, 0, 0);
+    ctx.drawImage(this.background, 0, 0, this.background.width / DETAIL, this.background.height / DETAIL);
     renderWall(ctx, this.info, t);
 
     const items: Drawable[] = [...this.props];
@@ -549,11 +549,11 @@ export class OfficeEngine {
   private drawSim(ctx: CanvasRenderingContext2D, sim: Sim, t: number, sitOffset: number) {
     const walking = sim.pose === "walk";
     const frame = walking ? Math.floor(sim.walkT * 8) % 4 : sim.pose === "sit" && sim.backend.state === "working" ? Math.floor(t * 6) % 2 : 0;
-    const sprite = characterSprite(sim.id, sim.dir, frame, sim.pose);
+    const sprite = characterSprite(sim.id, sim.dir, frame, sim.pose, this.mood(sim, t), this.blinking(sim, t));
     // respiração: meio pixel para cima e para baixo quando parado em pé
     const breathe = !walking && sim.pose === "stand" ? Math.round((Math.sin(t * 2 + sim.phase) + 1) * 0.5) * 0.5 : 0;
-    const x = this.snap(sim.x - 8);
-    const y = this.snap(sim.y - 24 + sitOffset - breathe);
+    const x = this.snap(sim.x - SPRITE_W / 2);
+    const y = this.snap(sim.y - SPRITE_H + sitOffset - breathe);
     if (sim.pose !== "sit") {
       ctx.fillStyle = "rgba(0,0,0,0.25)";
       ctx.beginPath();
@@ -567,7 +567,7 @@ export class OfficeEngine {
       ctx.ellipse(sim.x, sim.y + sitOffset, 9, 3.4, 0, 0, Math.PI * 2);
       ctx.stroke();
     }
-    ctx.drawImage(sprite, x, y);
+    ctx.drawImage(sprite, x, y, SPRITE_W, SPRITE_H);
     if (sim.sparkUntil > t) {
       for (let i = 0; i < 6; i++) {
         const a = t * 4 + (i * Math.PI) / 3;
@@ -584,8 +584,24 @@ export class OfficeEngine {
     }
   }
 
+  /** Expressão do rosto pelo estado do agente. */
+  private mood(sim: Sim, t: number): Mood {
+    if (sim.sparkUntil > t) return "joy";
+    const st = sim.backend.state;
+    if (st === "off") return this.info.running ? "happy" : "sleep";
+    if (st === "alert" || st === "error") return "worried";
+    if (st === "working") return "focus";
+    return "happy";
+  }
+
+  /** Piscada rápida a cada poucos segundos (cada um no seu ritmo). */
+  private blinking(sim: Sim, t: number) {
+    const period = 3.2 + (sim.phase % 1.5);
+    return (t + sim.phase * 2) % period < 0.14;
+  }
+
   private drawStateIcon(ctx: CanvasRenderingContext2D, sim: Sim, t: number) {
-    const headY = sim.y - 26 + this.sitOffset(sim);
+    const headY = sim.y - SPRITE_H - 2 + this.sitOffset(sim);
     const st = sim.backend.state;
     if (st === "working") {
       const a = t * 4;

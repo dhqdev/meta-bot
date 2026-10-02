@@ -190,7 +190,8 @@ export function Avatar({ id, size = 40, className }: { id: string; size?: number
     src = portrait(id, 48);
     portraits.set(id, src);
   }
-  return <img src={src} width={size} height={size} alt="" className={clsx("pixelated rounded-lg bg-panel2", className)} />;
+  // tamanho fixo: dentro de linhas flex o navegador esticava o retrato
+  return <img src={src} width={size} height={size} alt="" style={{ width: size, height: size }} className={clsx("pixelated shrink-0 self-start rounded-lg bg-panel2", className)} />;
 }
 
 export function Bar({ value, tone = "gold" }: { value: number; tone?: "gold" | "green" | "red" | "blue" }) {

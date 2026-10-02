@@ -357,7 +357,7 @@ meta-bot/
 │   ├── scripts/             verificar_sistema.py: escritório inteiro com preços reais (precisa de internet)
 │   └── tests/               155 testes
 ├── frontend/                React + Vite + Tailwind; escritório em canvas (pixel-art gerada no código)
-│   ├── src/office/          mapa, sprites, pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
+│   ├── src/office/          mapa, sprites (desenhados em 2×, com expressões), pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
 │   ├── public/              manifesto, service worker e ícones do app (PWA)
 │   ├── nginx/               proxy de /api e /ws, cabeçalhos e cache
 │   └── e2e/smoke.mjs        teste de ponta a ponta (Playwright, desktop e celular)

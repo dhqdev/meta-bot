@@ -47,6 +47,8 @@ frontend/src/
 ├── lib/api.ts format.ts auth.tsx
 ├── components/          Layout (menu, chips, instalar app), ui (Card, Badge, Field…), Chat (conversa), Charts
 ├── office/              engine.ts (motor: mundo + sobreposição), OfficeCanvas.tsx, map.ts, sprites.ts
+│                        (desenho em 2×: sprites 32×52 em SPRITE_W×SPRITE_H lógicos, fundo e imagens em DETAIL=2;
+│                         use fine() para meio pixel e escala k par no OfficeCanvas; expressões em sprites.Mood)
 └── pages/               Office, Agents, Daily, Strategies, Trades, Settings, Login
 frontend/public/         manifest.webmanifest, sw.js, icons/ (PWA), favicon.svg
 frontend/nginx/          proxy /api e /ws, cabeçalhos de segurança, cache do sw.js
