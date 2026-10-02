@@ -111,6 +111,7 @@ class RuntimeConfig(BaseModel):
     adaptive_exits: bool = True
     max_bars_in_trade: int = Field(0, ge=0, le=5000)
     close_before_weekend: bool = True
+    weekend_close: bool = True  # escritório fecha sozinho com o mercado (sexta 18h) e reabre no domingo
     b3_close_time: str = "18:20"
     b3_prefixes: list[str] = Field(default_factory=lambda: ["WIN", "WDO", "IND", "DOL", "BIT"])
 

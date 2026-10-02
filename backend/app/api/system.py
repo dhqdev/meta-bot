@@ -111,7 +111,12 @@ async def diagnostico(user: User = Depends(current_user), office=Depends(get_off
 
     brk = office.break_info()
     if not cfg.system_running:
-        add("stop", f"Escritório em pausa depois da daily até {_local(brk['until'])}." if brk else "Escritório desligado: ninguém abre operação nova até você ligar (botão no topo).")
+        if brk and brk.get("kind") == "weekend":
+            add("stop", f"Escritório fechado no fim de semana: reabre sozinho {_local(brk['until'])}, junto com o mercado.")
+        elif brk:
+            add("stop", f"Escritório em pausa depois da daily até {_local(brk['until'])}.")
+        else:
+            add("stop", "Escritório desligado: ninguém abre operação nova até você ligar (botão no topo).")
     if not fx["open"]:
         add("stop", f"Mercado de câmbio fechado agora. Reabre {_local(fx['next_change'])} (Brasília).")
     elif fx["next_change_in_min"] is not None and fx["next_change_in_min"] <= 180:
@@ -172,7 +177,14 @@ class RunBody(BaseModel):
 
 @router.post("/system/running")
 async def set_running(body: RunBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
-    office.end_break(reopen=False)  # ligar/desligar na mão vale mais que a pausa da daily
+    office.end_break(reopen=False)  # ligar/desligar na mão vale mais que a pausa da daily e o fim de semana
+    if body.running:
+        from app.agents.office import WEEKEND_SKIP_KEY
+        from app.core.market_hours import all_closed, next_open
+
+        cfg = get_config()
+        reopen = next_open(cfg.watchlist) if all_closed(cfg.watchlist) else None
+        kv_set(WEEKEND_SKIP_KEY, reopen.isoformat() if reopen else None)
     update_config({"system_running": body.running})
     bus.publish({"type": "system", "running": body.running})
     record_activity("system", "Sistema ligado: a equipe chegou ao escritório" if body.running else "Sistema desligado: sem novas entradas (as posições abertas continuam protegidas)", kind="system")

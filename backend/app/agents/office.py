@@ -28,6 +28,7 @@ from app.config import Settings
 from app.db import session_scope
 from app.events import bus, record_activity
 from app.kv import kv_get, kv_set
+from app.core.market_hours import all_closed, next_open
 from app.models import KV, EquitySnapshot, Lesson, Signal, StrategyProfile, Trade
 from app.runtime import get_config, update_config
 from app.services.llm import LLMService
@@ -35,6 +36,7 @@ from app.services.llm import LLMService
 log = logging.getLogger("metabot.office")
 
 BREAK_KEY = "office.break"
+WEEKEND_SKIP_KEY = "office.weekend_skip"  # dono religou na mão no fim de semana: não fecha de novo até essa hora
 
 AGENT_CLASSES = [InfraAgent, NewsAgent, ScheduleAgent, StrategistAgent, ManagerAgent, RiskAgent, CashierAgent, AuditorAgent]
 
@@ -176,6 +178,7 @@ class Office:
         while True:
             await asyncio.sleep(30)
             try:
+                self.check_weekend()
                 self.check_break()
                 if self.daily.due():
                     await self.daily.run()
@@ -190,24 +193,55 @@ class Office:
         info = kv_get(BREAK_KEY)
         return info if isinstance(info, dict) and info.get("until") else None
 
-    def start_break(self, minutes: int) -> None:
-        """Depois da daily automática: escritório fecha por ``minutes`` e reabre sozinho.
+    def start_break(self, minutes: int, until: datetime | None = None, kind: str = "daily") -> None:
+        """Escritório fecha e reabre sozinho: depois da daily automática (``minutes``) ou no fim de
+        semana, com o mercado fechado (``until`` = reabertura do mercado, ``kind="weekend"``).
 
         Ninguém abre posição nova na pausa (plano vazio e ordens stop armadas canceladas); o Caio
         continua protegendo as posições abertas (stop, alvo e trailing)."""
         now = datetime.now(timezone.utc)
-        until = now + timedelta(minutes=minutes)
-        info = {"until": until.isoformat(), "started": now.isoformat(), "minutes": int(minutes)}
+        until = until or now + timedelta(minutes=minutes)
+        minutes = int((until - now).total_seconds() // 60)
+        info = {"until": until.isoformat(), "started": now.isoformat(), "minutes": minutes, "kind": kind}
         kv_set(BREAK_KEY, info)
         update_config({"system_running": False})
         bus.publish({"type": "system", "running": False})
-        self.agents["cashier"].cancel_pending("pausa depois da daily")
+        self.agents["cashier"].cancel_pending("mercado fechado (fim de semana)" if kind == "weekend" else "pausa depois da daily")
         self.publish_office(office_break=info)
-        back = until.astimezone(ZoneInfo(self.settings.timezone)).strftime("%H:%M")
-        text = f"🌙 Daily feita! Escritório fechado por {minutes} min para a equipe descansar; voltamos às {back}. O Caio segue de olho nas posições abertas."
-        self.agents["manager"].tell("all", text, kind="daily", data={"break_until": info["until"]})
-        record_activity("manager", f"Pausa depois da daily: escritório fechado até {back} (reabre sozinho)", kind="system")
+        local = until.astimezone(ZoneInfo(self.settings.timezone))
+        back = local.strftime("%H:%M")
+        if kind == "weekend":
+            day = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"][local.weekday()]
+            text = f"🏖️ Mercado fechado: escritório fechado no fim de semana. Voltamos {day} às {back}. O Caio segue de olho nas posições abertas."
+            self.agents["manager"].tell("all", text, kind="info", data={"break_until": info["until"]})
+            record_activity("manager", f"Fim de semana: escritório fechado até {day} {back} (reabre sozinho com o mercado)", kind="system")
+        else:
+            text = f"🌙 Daily feita! Escritório fechado por {minutes} min para a equipe descansar; voltamos às {back}. O Caio segue de olho nas posições abertas."
+            self.agents["manager"].tell("all", text, kind="daily", data={"break_until": info["until"]})
+            record_activity("manager", f"Pausa depois da daily: escritório fechado até {back} (reabre sozinho)", kind="system")
         self._wake_all()
+
+    def check_weekend(self, now: datetime | None = None) -> bool:
+        """Mercado de todos os ativos fechado → fecha o escritório até a reabertura. Devolve True se fechou agora.
+
+        Não fecha se o dono desligou o escritório (vale a escolha dele) nem se ele religou na mão
+        durante o fim de semana (``office.weekend_skip``)."""
+        cfg = get_config()
+        now = now or datetime.now(timezone.utc)
+        if not cfg.weekend_close or not all_closed(cfg.watchlist, now):
+            return False
+        info = self.break_info()
+        if info and info.get("kind") == "weekend":
+            return False
+        if not cfg.system_running and info is None:
+            return False
+        if (kv_get(WEEKEND_SKIP_KEY) or "") > now.isoformat():
+            return False
+        until = next_open(cfg.watchlist, now)
+        if until is None:
+            return False
+        self.start_break(0, until=until, kind="weekend")
+        return True
 
     def check_break(self) -> bool:
         """Pausa vencida → reabre o escritório. Devolve True se reabriu agora."""
@@ -221,7 +255,8 @@ class Office:
 
     def end_break(self, reopen: bool) -> None:
         """Encerra a pausa. ``reopen=False`` quando o dono ligou/desligou na mão (vale a escolha dele)."""
-        if self.break_info() is None:
+        info = self.break_info()
+        if info is None:
             return
         kv_set(BREAK_KEY, None)
         self.publish_office(office_break={})
@@ -229,7 +264,10 @@ class Office:
             return
         update_config({"system_running": True})
         bus.publish({"type": "system", "running": True})
-        self.agents["manager"].tell("all", "☀️ Fim da pausa! Escritório aberto de novo: cada um na sua mesa, aplicando o que combinamos na daily.", kind="daily")
+        if info.get("kind") == "weekend":
+            self.agents["manager"].tell("all", "☀️ Mercado aberto! Começa a semana: cada um na sua mesa.", kind="info")
+        else:
+            self.agents["manager"].tell("all", "☀️ Fim da pausa! Escritório aberto de novo: cada um na sua mesa, aplicando o que combinamos na daily.", kind="daily")
         record_activity("manager", "Pausa encerrada: escritório aberto de novo", kind="system")
         self._wake_all()
 

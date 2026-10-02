@@ -40,3 +40,21 @@ def fx_status(at: datetime | None = None) -> dict:
         "next_change": change.isoformat() if change else None,
         "next_change_in_min": int((change - at) / timedelta(minutes=1)) if change else None,
     }
+
+
+def symbol_session(symbol: str) -> str:
+    from app.broker.realdata import route_for
+
+    return route_for(symbol).session
+
+
+def all_closed(symbols: list[str], at: datetime | None = None) -> bool:
+    """True quando o mercado de todos os ativos da mesa está fechado (ex.: câmbio no fim de semana)."""
+    return bool(symbols) and not any(is_open(symbol_session(s), at) for s in symbols)
+
+
+def next_open(symbols: list[str], at: datetime | None = None) -> datetime | None:
+    """Quando o primeiro desses mercados abre de novo."""
+    times = [next_change(symbol_session(s), at) for s in symbols if not is_open(symbol_session(s), at)]
+    times = [t for t in times if t is not None]
+    return min(times) if times else None

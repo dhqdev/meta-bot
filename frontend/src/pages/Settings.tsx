@@ -556,6 +556,7 @@ const SIMPLE_FIELDS: Record<string, FieldDef> = {
   daily_meeting_enabled: { key: "daily_meeting_enabled", label: "Daily automática", type: "switch", hint: "A equipe se reúne todo dia no horário abaixo (se trabalhou no dia), escreve o relatório e aplica os aprendizados no dia seguinte." },
   daily_meeting_time: { key: "daily_meeting_time", label: "Horário da daily (Brasília)", type: "time", hint: "Depois do fechamento dos mercados do dia é o ideal." },
   daily_break_minutes: { key: "daily_break_minutes", label: "Pausa depois da daily", int: true, min: 0, max: 720, suffix: "min", hint: "Depois da daily do horário, o escritório fecha por esse tempo (ninguém abre posição nova; o Caio continua protegendo as abertas) e reabre sozinho. 0 = sem pausa." },
+  weekend_close: { key: "weekend_close", label: "Fechar o escritório no fim de semana", type: "switch", hint: "Com o câmbio fechado (sexta 18h até domingo 19h, Brasília) a equipe vai para casa: sem plano, sem testes e sem gasto de IA. Reabre sozinho com o mercado. Ligar na mão no fim de semana vale até a reabertura." },
   ai_enabled: { key: "ai_enabled", label: "IA ligada", type: "switch", hint: "Desligada, os agentes seguem só com as regras (funciona igual, sem custo)." },
   ai_daily_budget_usd: { key: "ai_daily_budget_usd", label: "Orçamento diário", min: 0, max: 1000, suffix: "US$/dia", hint: "Teto de gasto com IA por dia. Passou, os agentes seguem só com as regras até amanhã. 0 = sem teto." },
   ai_max_calls_per_hour: { key: "ai_max_calls_per_hour", label: "Máximo de chamadas por hora", int: true, min: 0, max: 500, hint: "Segurança extra contra gasto inesperado." },
@@ -632,6 +633,7 @@ function DailyCard({ cfg, set }: { cfg: Cfg; set: Setter }) {
         <FieldControl f={SIMPLE_FIELDS.daily_meeting_enabled} cfg={cfg} set={set} defaults={defaults} />
         <FieldControl f={SIMPLE_FIELDS.daily_meeting_time} cfg={cfg} set={set} defaults={defaults} />
         <FieldControl f={SIMPLE_FIELDS.daily_break_minutes} cfg={cfg} set={set} defaults={defaults} />
+        <FieldControl f={SIMPLE_FIELDS.weekend_close} cfg={cfg} set={set} defaults={defaults} />
         <p className="text-[11px] leading-snug text-muted">
           Na daily cada agente avalia a sua parte e decidem ajustes seguros para amanhã: horários a evitar, estratégias que ficam fora do plano até passarem na revalidação, preferência entre scalper e posição longa e o risco da Rita (que só diminui ou volta ao normal, nunca aumenta sozinho).
         </p>

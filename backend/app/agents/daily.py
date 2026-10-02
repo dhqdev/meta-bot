@@ -100,7 +100,11 @@ class DailyMeeting:
         if kv_get("daily.last") == today:
             return False
         # só faz sentido com a equipe trabalhando hoje (ou com operações no dia)
-        return cfg.system_running or self._trades_today() > 0
+        if cfg.system_running or self._trades_today() > 0:
+            return True
+        # sexta: o escritório fechou com o mercado antes da daily, mas a equipe trabalhou hoje
+        brk = kv_get("office.break") or {}
+        return brk.get("kind") == "weekend" and str(brk.get("started", "")) >= self._day_start().isoformat()
 
     def next_at(self) -> str:
         cfg = get_config()

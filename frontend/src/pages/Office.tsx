@@ -55,7 +55,12 @@ export function OfficePage() {
 
   return (
     <div className="space-y-3">
-      {!live.system.running && live.office.office_break?.until && (
+      {!live.system.running && live.office.office_break?.kind === "weekend" && (
+        <div className="rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
+          🏖️ <b>Fim de semana:</b> o mercado de câmbio está fechado e a equipe foi para casa. O escritório reabre sozinho <b>{dateTime(live.office.office_break.until)}</b>, junto com o mercado.
+        </div>
+      )}
+      {!live.system.running && live.office.office_break?.until && live.office.office_break?.kind !== "weekend" && (
         <div className="rounded-xl border border-indigo-400/30 bg-indigo-500/10 px-4 py-3 text-sm text-indigo-100">
           🌙 <b>Pausa depois da daily:</b> a equipe volta às <b>{time(live.office.office_break.until)}</b>. Ninguém abre posição nova agora; o Caio continua protegendo as posições abertas.
         </div>

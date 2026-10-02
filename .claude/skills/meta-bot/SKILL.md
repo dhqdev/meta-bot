@@ -48,6 +48,8 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 
 O que muda no dia seguinte (provado em `tests/test_next_day.py`): hora evitada bloqueia candidato; estratégia em `observacao` com `live.revalidate_after` (daily: até amanhã 23:59; Aurora: +24 h) fica fora do plano e `strategist.revalidate_flagged` só revalida depois disso, exigindo backtest aprovado **e** as `RECENT_TRADES` operações mais recentes do teste no positivo (reprovada → `live.blocked_until` +3 dias, respeitado pelo ranking); `adaptive_mult` menor = lote menor; **todas** as lições ativas entram no prompt do plano da IA do Gustavo (`active_lessons(None)`), o cache do plano da IA é descartado depois da daily; foco lembrado de manhã.
 
+**Fim de semana:** com `weekend_close` ligado, `office.check_weekend()` (no `daily_loop`) fecha o escritório quando o mercado de todos os ativos da `watchlist` está fechado (câmbio: sexta 18h a domingo 19h de Brasília) usando a mesma pausa (`office.break` com `kind="weekend"`) até `market_hours.next_open`. Desligado pelo dono = não mexe; religar na mão no fim de semana grava `office.weekend_skip` e vale até a reabertura. Na sexta a daily acontece mesmo com o escritório fechado.
+
 **Pausa depois da daily:** só na daily automática (`run(force=False)`) e com o sistema ligado, `office.start_break(daily_break_minutes)` desliga `system_running`, cancela ordens stop armadas, guarda `office.break` no kv e publica `office_break`; `daily_loop` chama `check_break()` a cada 30 s e reabre sozinho. `POST /api/system/running` encerra a pausa sem reabrir (vale a escolha do dono).
 
 ## Personalidades e conversa

@@ -132,3 +132,45 @@ def test_v3_keeps_only_the_ten_pairs_with_the_broker_suffix():
     assert cfg.watchlist == [p + "m" for p in TRADING_PAIRS] and cfg.symbol_suffix == "m"
     assert [f.enabled for f in cfg.news_feeds] == [False, True]
     assert (cfg.daily_loss_limit, cfg.daily_profit_target) == (1.5, 1)
+
+
+def test_office_closes_for_the_weekend_and_reopens_with_the_market(office):
+    """Câmbio fechado (sexta 18h de Brasília) → escritório fecha sozinho até domingo; religar na mão vale."""
+    from datetime import datetime, timezone
+
+    from app.agents.office import WEEKEND_SKIP_KEY
+    from app.kv import kv_get, kv_set
+    from app.runtime import get_config, update_config
+
+    update_config({"system_running": True})
+    friday_open = datetime(2026, 10, 2, 20, 30, tzinfo=timezone.utc)
+    assert not office.check_weekend(friday_open)
+    assert get_config().system_running
+
+    friday_night = datetime(2026, 10, 2, 21, 5, tzinfo=timezone.utc)
+    assert office.check_weekend(friday_night)
+    info = office.break_info()
+    assert info["kind"] == "weekend" and info["until"].startswith("2026-10-04T22:00")
+    assert not get_config().system_running
+    assert not office.check_weekend(friday_night)  # já fechado
+
+    # dono religou na mão: não fecha de novo até a reabertura
+    office.end_break(reopen=False)
+    update_config({"system_running": True})
+    kv_set(WEEKEND_SKIP_KEY, "2026-10-04T22:00:00+00:00")
+    assert not office.check_weekend(datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc))
+    kv_set(WEEKEND_SKIP_KEY, None)
+
+    # escritório desligado pelo dono: o fim de semana não mexe
+    update_config({"system_running": False})
+    assert not office.check_weekend(friday_night) and office.break_info() is None
+
+    # pausa vencida (domingo à noite) → reabre sozinho
+    update_config({"system_running": True})
+    office.check_weekend(friday_night)
+    kv_set("office.break", {**kv_get("office.break"), "until": "2000-01-01T00:00:00+00:00"})
+    assert office.check_break() and get_config().system_running
+
+    # desligado nas configurações: não fecha
+    update_config({"weekend_close": False})
+    assert not office.check_weekend(friday_night)
