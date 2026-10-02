@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { TranscriptLine, agentName } from "../components/Chat";
 import { AGENT_COLORS, Avatar, Badge, Button, Card, Empty, ErrorBox, Loading, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { dateTime, EXIT_LABEL, num, pct, signed } from "../lib/format";
+import { currencySymbol, dateTime, EXIT_LABEL, num, pct, signed } from "../lib/format";
 import { onLiveEvent, useLive } from "../lib/live";
 
 interface ReportSummary {
@@ -173,7 +173,7 @@ function ReportDetail({ day }: { day: string }) {
   const r = q.data!;
   const m = r.metrics || {};
   const totals = m.totals || {};
-  const cur = m.currency ? ` ${m.currency}` : "";
+  const cur = m.currency ? ` ${currencySymbol(m.currency)}` : "";
   const role = (id: string) => live.agents[id]?.role;
   return (
     <div className="min-w-0 space-y-4">

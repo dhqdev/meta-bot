@@ -42,7 +42,7 @@ FIELD_LABELS = {
     "news_interval_minutes": "Ler notícias a cada", "daily_meeting_time": "Horário da daily", "daily_break_minutes": "Pausa depois da daily",
     "position_review_minutes": "Revisar posições abertas a cada", "ai_news_interval_minutes": "Notícias pela IA a cada",
     "ai_plan_refresh_minutes": "Validade do plano da IA", "ai_max_calls_per_hour": "Máximo de chamadas de IA por hora",
-    "ai_daily_budget_usd": "Orçamento diário de IA", "paper_initial_balance": "Saldo inicial da conta simulada",
+    "ai_daily_budget_usd": "Orçamento diário de IA", "paper_initial_balance": "Saldo inicial da conta simulada", "paper_currency": "Moeda da conta simulada",
     "paper_commission_per_lot": "Comissão por lote", "paper_slippage_points": "Slippage", "magic_number": "Número mágico",
     "deviation_points": "Desvio máximo da ordem", "server_utc_offset_hours": "Fuso do servidor do MT5",
 }
@@ -106,6 +106,8 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
         cfg = update_config(patch)
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail=friendly_error(exc)) from exc
+    if "paper_currency" in patch:
+        office.sync_paper_currency()
     if {"data_source", "server_utc_offset_hours"} & set(patch):
         office.market.clear_cache()
         office.sync_data_family()

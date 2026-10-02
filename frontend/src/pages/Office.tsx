@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { MessageRow, TEAM_ORDER, TeamChat } from "../components/Chat";
 import { AGENT_COLORS, AGENT_NAMES, Avatar, Badge, Bar, Card, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { dateTime, DIRECTION_LABEL, money, pct, signed, time } from "../lib/format";
+import { cash, dateTime, DIRECTION_LABEL, pct, signed, signedCash, time } from "../lib/format";
 import { onLiveEvent, useLive } from "../lib/live";
 import { OfficeCanvas } from "../office/OfficeCanvas";
 
@@ -70,8 +70,8 @@ export function OfficePage() {
         <div className="min-w-0 space-y-3">
           <OfficeCanvas selected={selected} onSelect={pick} />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="Patrimônio" value={money(acc.equity)} hint={`${acc.currency || ""} · ${live.system.mode === "live" ? "conta MT5" : "simulado"}`} tone="gold" />
-            <Stat label="Hoje" value={signed(today)} hint={risk.day_pct != null ? `${signed(risk.day_pct)}% no dia` : undefined} tone={(today ?? 0) >= 0 ? "up" : "down"} />
+            <Stat label="Patrimônio" value={cash(acc.equity, acc.currency)} hint={live.system.mode === "live" ? "conta MT5" : "conta simulada"} tone="gold" />
+            <Stat label="Hoje" value={signedCash(today, acc.currency || risk.currency)} hint={risk.day_pct != null ? `${signed(risk.day_pct)}% no dia` : undefined} tone={(today ?? 0) >= 0 ? "up" : "down"} />
             <Stat label="Acerto (30 dias)" value={pct(summary.data?.win_rate)} hint={`${summary.data?.trades ?? 0} operações`} />
             <Stat label="Posições abertas" value={open.data?.length ?? 0} hint={`limite ${risk.max_positions ?? "—"}`} />
           </div>
@@ -166,7 +166,7 @@ function TeamStrip({ selected, onPick }: { selected?: string; onPick: (id: strin
 /** Meta de ganho e limite de perda do dia (a equipe para quando bate um dos dois). */
 function DayGoals() {
   const risk = useLive().office.risk || {};
-  const cur = risk.currency ? ` ${risk.currency}` : "";
+  const cur = risk.currency;
   const pnl = Number(risk.day_pnl ?? 0);
   const loss = Number(risk.daily_loss_money ?? 0);
   const target = Number(risk.daily_target_money ?? 0);
@@ -182,14 +182,12 @@ function DayGoals() {
     >
       {stop === "target" && (
         <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
-          🎯 Meta batida ({signed(risk.day_stop_pnl ?? pnl)}
-          {cur}). A equipe parou até amanhã.
+          🎯 Meta batida ({signedCash(risk.day_stop_pnl ?? pnl, cur)}). A equipe parou até amanhã.
         </div>
       )}
       {stop === "loss" && (
         <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-          ⛔ Limite de perda atingido ({signed(risk.day_stop_pnl ?? pnl)}
-          {cur}). A equipe parou até amanhã.
+          ⛔ Limite de perda atingido ({signedCash(risk.day_stop_pnl ?? pnl, cur)}). A equipe parou até amanhã.
         </div>
       )}
       {risk.kill_switch && <div className="mb-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">🚨 Trava geral ativa: {risk.kill_reason}. Libere em Config.</div>}
@@ -197,14 +195,14 @@ function DayGoals() {
         <div>
           <div className="mb-1 flex justify-between gap-2 text-xs">
             <span className="text-slate-300">Meta de ganho</span>
-            <span className="tabular-nums text-muted">{target > 0 ? `+${money(Math.max(0, pnl))} de +${money(target)}${cur}` : "sem meta (opera o dia todo)"}</span>
+            <span className="tabular-nums text-muted">{target > 0 ? `${signedCash(Math.max(0, pnl), cur)} de ${signedCash(target, cur)}` : "sem meta (opera o dia todo)"}</span>
           </div>
           <Bar value={target > 0 ? Math.max(0, pnl) / target : 0} tone="green" />
         </div>
         <div>
           <div className="mb-1 flex justify-between gap-2 text-xs">
             <span className="text-slate-300">Limite de perda</span>
-            <span className="tabular-nums text-muted">{loss > 0 ? `${pnl < 0 ? "−" : ""}${money(Math.max(0, -pnl))} de −${money(loss)}${cur}` : "sem limite diário"}</span>
+            <span className="tabular-nums text-muted">{loss > 0 ? `${pnl < 0 ? "−" : ""}${cash(Math.max(0, -pnl), cur)} de −${cash(loss, cur)}` : "sem limite diário"}</span>
           </div>
           <Bar value={loss > 0 ? Math.max(0, -pnl) / loss : 0} tone="red" />
         </div>

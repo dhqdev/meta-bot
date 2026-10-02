@@ -67,6 +67,7 @@ class Office:
         bus.bind_loop(asyncio.get_running_loop())
         self.ensure_setup()
         self.sync_data_family()
+        self.sync_paper_currency()
         for agent in self.agents.values():
             self.tasks.append(asyncio.create_task(agent.run_forever(), name=f"agent-{agent.id}"))
         self.tasks.append(asyncio.create_task(self.daily_loop(), name="daily"))
@@ -95,6 +96,41 @@ class Office:
         if previous is None or previous == family:
             return False
         self._restart_learning(previous, family)
+        return True
+
+    def sync_paper_currency(self) -> bool:
+        """Trocou a moeda da conta simulada (real ↔ dólar): a conta recomeça do saldo inicial na moeda nova.
+
+        Resultados em moedas diferentes não se somam, então as operações simuladas antigas vão para o
+        arquivo (``paper-usd``/``paper-brl``) e as abertas são anuladas sem lucro nem prejuízo. O que a
+        equipe aprendeu fica, porque é medido em R (múltiplos do risco), não em dinheiro."""
+        currency = get_config().paper_currency
+        previous = kv_get("paper.currency")
+        if previous == currency:
+            return False
+        kv_set("paper.currency", currency)
+        if previous is None:
+            with session_scope() as s:
+                if s.scalar(select(Trade.id).where(Trade.mode == "paper").limit(1)) is None:
+                    return False
+            previous = "USD"  # antes desta opção a conta simulada era sempre em dólar
+        now = datetime.now(timezone.utc)
+        archived = f"paper-{previous.lower()}"
+        with session_scope() as s:
+            for tr in s.scalars(select(Trade).where(Trade.mode == "paper", Trade.status == "open")):
+                tr.status, tr.exit_price, tr.exit_time, tr.exit_reason, tr.pnl, tr.pnl_r = "closed", tr.entry_price, now, "troca de moeda", 0.0, 0.0
+            s.execute(update(Trade).where(Trade.mode == "paper").values(mode=archived))
+            s.execute(update(EquitySnapshot).where(EquitySnapshot.mode == "paper").values(mode=archived))
+        self.agents["cashier"].cancel_pending("troca da moeda da conta simulada")
+        kv_set("paper_reset_at", now.isoformat())
+        kv_set("risk_state", None)
+        self.market.clear_cache()
+        name = "reais (R$)" if currency == "BRL" else "dólares (US$)"
+        cfg = get_config()
+        text = f"💱 A conta simulada agora é em {name}. Ela recomeça com {cfg.paper_initial_balance:,.2f} e os lotes passam a ser calculados nessa moeda.".replace(",", "X").replace(".", ",").replace("X", ".")
+        self.agents["risk"].tell("all", text, kind="alerta")
+        record_activity("risk", text + " Posições simuladas abertas foram anuladas sem lucro nem prejuízo.", kind="system", level="warning")
+        log.info("moeda da conta simulada: %s -> %s", previous, currency)
         return True
 
     def _restart_learning(self, previous: str, family: str) -> None:

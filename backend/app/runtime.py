@@ -51,6 +51,8 @@ class RuntimeConfig(BaseModel):
     enabled_strategies: list[str] = Field(default_factory=list)  # vazio = todas
 
     # --- Conta simulada
+    # moeda da conta simulada: saldo, comissão, metas em valor e resultado (no modo real vale a moeda da conta do MT5)
+    paper_currency: Literal["BRL", "USD"] = "BRL"
     paper_initial_balance: float = Field(10000.0, ge=100, le=100_000_000)
     paper_commission_per_lot: float = Field(7.0, ge=0, le=500)
     paper_slippage_points: float = Field(2.0, ge=0, le=1000)

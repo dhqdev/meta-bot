@@ -74,7 +74,7 @@ class PaperBroker:
             "login": "SIMULADO",
             "server": "Meta-Bot (conta simulada)",
             "company": "Meta-Bot",
-            "currency": "USD",
+            "currency": cfg.paper_currency,
             "balance": round(balance, 2),
             "equity": round(balance + open_pnl, 2),
             "margin_free": round(balance + open_pnl, 2),

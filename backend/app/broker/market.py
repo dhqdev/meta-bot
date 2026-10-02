@@ -25,12 +25,17 @@ class MarketDataError(Exception):
     pass
 
 
+# Sem internet (mercado simulado e testes): quantas unidades da moeda valem 1 dólar, só para converter o valor do tick.
+OFFLINE_USD_RATES = {"USD": 1.0, "BRL": 5.4}
+
+
 class MarketService:
     def __init__(self, terminals: TerminalManager, synthetic: SyntheticMarket | None = None, real: RealMarket | None = None):
         self.terminals = terminals
         self.synthetic = synthetic or SyntheticMarket()
         self.real = real or RealMarket()
         self.mt5_ok = False  # atualizado pelo agente de TI
+        self.mt5_currency = ""  # moeda da conta do MT5 (atualizada pelo agente de TI)
         self.auto_offset_hours: float = 0.0
         self._rates: dict[tuple, tuple[float, pd.DataFrame, float]] = {}
         self._specs: dict[tuple, tuple[float, dict]] = {}
@@ -45,6 +50,26 @@ class MarketService:
         if self.mt5_ok:
             return "mt5"
         return "real" if get_settings().network_enabled else "synthetic"
+
+    def account_currency(self) -> str:
+        """Moeda em que o saldo e o resultado são contados: a do MT5 no modo real, a escolhida no simulado."""
+        cfg = get_config()
+        if cfg.mode == "live":
+            return self.mt5_currency or "USD"
+        return cfg.paper_currency
+
+    async def usd_rate(self, currency: str) -> float | None:
+        """Unidades da moeda por 1 dólar (cotação do dia quando há internet)."""
+        if currency in ("USD", ""):
+            return 1.0
+        if get_settings().network_enabled:
+            try:
+                rate = await self.real.usd_rate(currency)
+            except Exception:  # noqa: BLE001  (fonte pública fora do ar: usa a reserva)
+                rate = None
+            if rate:
+                return rate
+        return OFFLINE_USD_RATES.get(currency)
 
     def family(self) -> str:
         """"real" (MT5 ou dados públicos: preços de verdade) ou "simulado"."""
@@ -70,7 +95,8 @@ class MarketService:
     # ---------------------------------------------------------- consultas
     async def spec(self, symbol: str) -> dict:
         src = self.source()
-        key = (src, symbol)
+        dst = self.account_currency()
+        key = (src, symbol, dst)
         cached = self._specs.get(key)
         if cached and time.time() - cached[0] < 600:
             return cached[1]
@@ -87,7 +113,21 @@ class MarketService:
             except (MT5Error, MT5Unavailable) as exc:
                 raise MarketDataError(exc.message) from exc
             spec = normalize_spec(info)
+        spec = await self._in_account_currency(spec, src, dst)
         self._specs[key] = (time.time(), spec)
+        return spec
+
+    async def _in_account_currency(self, spec: dict, src: str, dst: str) -> dict:
+        """Valor do tick na moeda da conta. Preços públicos e simulados vêm em dólar; o MT5, na moeda da conta dele."""
+        given = (self.mt5_currency or dst) if src == "mt5" else "USD"
+        spec = {**spec, "account_currency": dst}
+        if given == dst:
+            return spec
+        to_usd, to_dst = await self.usd_rate(given), await self.usd_rate(dst)
+        if not to_usd or not to_dst:
+            log.warning("sem cotação para converter %s -> %s; valor do tick sem conversão", given, dst)
+            return spec
+        spec["tick_value"] = round(float(spec.get("tick_value") or 0) * to_dst / to_usd, 8)
         return spec
 
     async def rates(self, symbol: str, timeframe: str, count: int = 1000, closed_only: bool = False, max_age: float | None = None) -> Bars:

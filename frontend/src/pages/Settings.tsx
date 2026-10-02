@@ -6,7 +6,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Avatar, Badge, Button, Card, ErrorBox, Field, Input, Loading, PasswordPrompt, Select, Switch } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { dateTime, money } from "../lib/format";
+import { cash, currencySymbol, dateTime, money } from "../lib/format";
 import { patchSystem, useLive } from "../lib/live";
 
 type Cfg = Record<string, any>;
@@ -165,8 +165,18 @@ const SECTIONS: Section[] = [
     title: "Conta simulada e MT5 (avançado)",
     about: "Custos usados no simulado e nos backtests, origem dos preços e detalhes das ordens no MT5.",
     fields: [
-      { key: "paper_initial_balance", label: "Saldo inicial da conta simulada", min: 100, max: 100000000, suffix: "USD", hint: "Vale ao zerar a conta simulada (Modo de operação)." },
-      { key: "paper_commission_per_lot", label: "Comissão por lote (ida e volta)", min: 0, max: 500, suffix: "USD", hint: "Coloque a da sua corretora: entra no simulado e em todos os backtests." },
+      {
+        key: "paper_currency",
+        label: "Moeda da conta simulada",
+        type: "select",
+        options: [
+          ["BRL", "Real (R$)"],
+          ["USD", "Dólar (US$)"],
+        ],
+        hint: "Saldo, comissão, metas em valor e resultados ficam nessa moeda; o valor de cada ponto é convertido pela cotação do dia. Trocar a moeda recomeça a conta simulada (o que a equipe aprendeu continua). No modo real vale a moeda da conta do MT5.",
+      },
+      { key: "paper_initial_balance", label: "Saldo inicial da conta simulada", min: 100, max: 100000000, suffix: "@moeda", hint: "Vale ao zerar a conta simulada (Modo de operação)." },
+      { key: "paper_commission_per_lot", label: "Comissão por lote (ida e volta)", min: 0, max: 500, suffix: "@moeda", hint: "Coloque a da sua corretora: entra no simulado e em todos os backtests." },
       { key: "paper_slippage_points", label: "Slippage", min: 0, max: 1000, suffix: "pontos", hint: "Diferença média entre o preço pedido e o executado (simulado e backtests)." },
       {
         key: "data_source",
@@ -342,7 +352,9 @@ function DefaultNote({ f, value, def, onReset }: { f: FieldDef; value: any; def:
   );
 }
 
-function FieldControl({ f, cfg, set, defaults }: { f: FieldDef; cfg: Cfg; set: Setter; defaults: Cfg }) {
+function FieldControl({ f: def, cfg, set, defaults }: { f: FieldDef; cfg: Cfg; set: Setter; defaults: Cfg }) {
+  // valores em dinheiro mostram a moeda da conta simulada
+  const f = def.suffix === "@moeda" ? { ...def, suffix: currencySymbol(cfg.paper_currency || "BRL") } : def;
   const v = cfg[f.key];
   const reset = () => set(f.key, defaults[f.key]);
   const type = f.type ?? "number";
@@ -440,7 +452,7 @@ function GoalsCard({ cfg, set, setMany, defaults }: { cfg: Cfg; set: Setter; set
   const preview = (value: number, unit: string, sign: "-" | "+") => {
     if (!value) return null;
     if (unit === "money") return equity ? `= ${money((value / equity) * 100, 2)}% do patrimônio` : null;
-    return equity ? `≈ ${sign}${money((equity * value) / 100)} ${cur} hoje` : null;
+    return equity ? `≈ ${sign}${cash((equity * value) / 100, cur)} hoje` : null;
   };
   const unitOptions: Array<[string, string]> = [
     ["percent", "% do patrimônio"],

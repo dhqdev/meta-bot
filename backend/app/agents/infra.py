@@ -97,6 +97,8 @@ class InfraAgent(Agent):
         connected = bool(health.get("connected")) and bool(account)
         self._estimate_offset(health.get("server_time_hint"))
         office.market.mt5_ok = connected
+        if connected and account.get("currency"):
+            office.market.mt5_currency = str(account["currency"]).upper()
         self.status = {
             "configured": True,
             "connected": connected,

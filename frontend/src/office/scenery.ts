@@ -521,7 +521,7 @@ function drawProp(p: Prop): Drawable[] {
             rect(ctx, px + 2, py - 8, 28, 38, "#34495e");
             rect(ctx, px + 4, py - 6, 24, 7, "#0b0f14");
             const bal = info.balance != null ? Math.round(info.balance).toString().slice(-6) : "------";
-            pixelText(ctx, "$" + bal, px + 16, py - 5, "#2ecc71", 4, "center");
+            pixelText(ctx, (info.currency === "BRL" ? "R$" : "$") + bal, px + 16, py - 5, "#2ecc71", 4, "center");
             const spin = Date.now() / 1000 - info.lastTradeAt < 3 ? t * 8 : 0;
             ctx.strokeStyle = "#bdc3c7";
             ctx.lineWidth = 2;

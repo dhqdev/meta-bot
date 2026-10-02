@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
 
 from app.config import get_settings  # noqa: E402
 from app.db import Base, configure, get_engine, init_db  # noqa: E402
-from app.runtime import reset_cache  # noqa: E402
+from app.runtime import reset_cache, update_config  # noqa: E402
 from app.security import SecretBox, set_secret_box  # noqa: E402
 
 set_secret_box(SecretBox(get_settings().secret_key))
@@ -46,6 +46,8 @@ def clean_db():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     reset_cache()
+    # as contas dos testes antigos são em dólar; a conta em reais tem testes próprios (test_currency.py)
+    update_config({"paper_currency": "USD"})
     yield
     reset_cache()
 

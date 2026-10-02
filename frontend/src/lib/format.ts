@@ -1,6 +1,17 @@
 export const money = (v: number | null | undefined, digits = 2) =>
   v == null || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
+/** Símbolo da moeda da conta: R$ para reais, US$ para dólar. */
+export const currencySymbol = (c: string | null | undefined) => (c === "BRL" ? "R$" : c === "USD" ? "US$" : c || "");
+
+/** Valor com o símbolo da moeda na frente: "R$ 1.234,56". */
+export const cash = (v: number | null | undefined, c: string | null | undefined, digits = 2) =>
+  v == null || Number.isNaN(v) ? "—" : `${currencySymbol(c)} ${money(v, digits)}`.trim();
+
+/** Igual a ``cash``, com sinal: "+R$ 12,00" / "−R$ 8,50". */
+export const signedCash = (v: number | null | undefined, c: string | null | undefined, digits = 2) =>
+  v == null || Number.isNaN(v) ? "—" : `${v >= 0 ? "+" : "−"}${cash(Math.abs(v), c, digits)}`;
+
 export const signed = (v: number | null | undefined, digits = 2) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${money(v, digits)}`);
 
 export const pct = (v: number | null | undefined, digits = 0) =>

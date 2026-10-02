@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { signed } from "../lib/format";
+import { signedCash } from "../lib/format";
 import { patchSystem, useLive } from "../lib/live";
 import { Badge } from "./ui";
 
@@ -22,16 +22,11 @@ const NAV = [
 export function DayGoalChip() {
   const risk = useLive().office.risk;
   if (!risk || risk.day_pnl == null) return null;
-  const cur = risk.currency ? ` ${risk.currency}` : "";
-  if (risk.day_stop === "target") return <Badge tone="green">🎯 meta do dia batida · {signed(risk.day_stop_pnl ?? risk.day_pnl)}{cur}</Badge>;
-  if (risk.day_stop === "loss") return <Badge tone="red">⛔ limite do dia · {signed(risk.day_stop_pnl ?? risk.day_pnl)}{cur}</Badge>;
+  const cur = risk.currency;
+  if (risk.day_stop === "target") return <Badge tone="green">🎯 meta do dia batida · {signedCash(risk.day_stop_pnl ?? risk.day_pnl, cur)}</Badge>;
+  if (risk.day_stop === "loss") return <Badge tone="red">⛔ limite do dia · {signedCash(risk.day_stop_pnl ?? risk.day_pnl, cur)}</Badge>;
   const pnl = Number(risk.day_pnl) || 0;
-  return (
-    <Badge tone={pnl > 0 ? "green" : pnl < 0 ? "red" : "slate"}>
-      hoje {signed(pnl)}
-      {cur}
-    </Badge>
-  );
+  return <Badge tone={pnl > 0 ? "green" : pnl < 0 ? "red" : "slate"}>hoje {signedCash(pnl, cur)}</Badge>;
 }
 
 export function StatusChips() {

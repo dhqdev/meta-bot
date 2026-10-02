@@ -114,6 +114,7 @@ A conta simulada funciona como uma conta de verdade: **preços reais**, spread d
 - O mercado fecha de verdade: fim de semana, fora do pregão e feriados (sem preço novo), nada entra.
 - O **Tito** confere a cada minuto se os preços estão chegando e avisa a equipe se pararem; sem preço novo, ninguém entra.
 - Com o **MT5 conectado**, os preços passam a vir da sua corretora. Sem internet (ou escolhendo em **Config. → Ajustes finos → Conta simulada e MT5**), dá para voltar ao **mercado simulado**, que serve só para testes.
+- **Conta em reais:** a conta simulada é em **R$** por padrão (**Config. → Ajustes finos → Conta simulada e MT5 → Moeda**). Os preços públicos dão o valor de cada ponto em dólar; ele é convertido pela cotação do dia (Yahoo; reserva USDT/BRL da Binance), então lote, risco, metas em valor e resultado ficam todos em reais. No modo real vale a moeda da conta do MT5, que já informa o valor do ponto nela. Trocar a moeda recomeça a conta simulada; o aprendizado continua, porque é medido em R.
 - Ao trocar de preço simulado para preço real (ou o contrário), o que foi aprendido com a outra origem não vale mais: a conta simulada recomeça, posições abertas são anuladas sem lucro nem prejuízo e a Estela refaz todos os testes com o histórico novo.
 
 ## Metas do dia
@@ -354,7 +355,7 @@ meta-bot/
 │   ├── app/services/        IA (OpenRouter), feeds de notícias e calendário
 │   ├── app/api/             rotas REST + WebSocket
 │   ├── scripts/             verificar_sistema.py: escritório inteiro com preços reais (precisa de internet)
-│   └── tests/               152 testes
+│   └── tests/               155 testes
 ├── frontend/                React + Vite + Tailwind; escritório em canvas (pixel-art gerada no código)
 │   ├── src/office/          mapa, sprites, pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
 │   ├── public/              manifesto, service worker e ícones do app (PWA)
@@ -385,7 +386,7 @@ API (todas exigem login, exceto `/api/health` e `/api/auth/status|setup|login`):
 ## Testes e CI
 
 ```bash
-cd backend && python -m pytest -q          # 152 testes
+cd backend && python -m pytest -q          # 155 testes
 cd backend && python scripts/verificar_sistema.py --minutos 5   # preços reais + agentes (precisa de internet)
 cd frontend && npm run build               # typecheck + build
 BASE_URL=http://127.0.0.1:4173 node frontend/e2e/smoke.mjs   # com backend e "npm run preview" no ar
