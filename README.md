@@ -203,7 +203,7 @@ A IA é opcional: sem chave, todos os agentes funcionam só com as regras. Coloq
 
 Economias ligadas por padrão:
 - a Nina junta as manchetes novas e chama a IA no máximo **a cada 15 min**;
-- o Gustavo **reaproveita o plano da IA** enquanto os candidatos não mudam (validade de 60 min);
+- o Gustavo **reaproveita o plano da IA** enquanto os melhores candidatos são os mesmos, mesmo que a pontuação oscile (validade de 60 min); só pergunta de novo se um escolhido sai do topo, fica bloqueado ou muda de direção, ou se entra no topo um candidato novo;
 - **limite de 12 chamadas por hora** e **orçamento de US$ 0,50 por dia** (passou disso, os agentes seguem só com as regras até virar o dia);
 - o custo real de cada chamada vem do OpenRouter e aparece na tela (hoje, 30 dias e por agente).
 
@@ -354,7 +354,7 @@ meta-bot/
 │   ├── app/services/        IA (OpenRouter), feeds de notícias e calendário
 │   ├── app/api/             rotas REST + WebSocket
 │   ├── scripts/             verificar_sistema.py: escritório inteiro com preços reais (precisa de internet)
-│   └── tests/               151 testes
+│   └── tests/               152 testes
 ├── frontend/                React + Vite + Tailwind; escritório em canvas (pixel-art gerada no código)
 │   ├── src/office/          mapa, sprites, pathfinding (A*), motor de animação (mundo nítido + textos na resolução da tela)
 │   ├── public/              manifesto, service worker e ícones do app (PWA)
@@ -385,7 +385,7 @@ API (todas exigem login, exceto `/api/health` e `/api/auth/status|setup|login`):
 ## Testes e CI
 
 ```bash
-cd backend && python -m pytest -q          # 151 testes
+cd backend && python -m pytest -q          # 152 testes
 cd backend && python scripts/verificar_sistema.py --minutos 5   # preços reais + agentes (precisa de internet)
 cd frontend && npm run build               # typecheck + build
 BASE_URL=http://127.0.0.1:4173 node frontend/e2e/smoke.mjs   # com backend e "npm run preview" no ar

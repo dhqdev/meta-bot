@@ -1,6 +1,7 @@
 """Cada ajuste da tela de Configurações muda de verdade o comportamento da equipe."""
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -160,3 +161,33 @@ def test_settings_api_gives_friendly_errors(client_owner):
     assert set(view["ai"]["models"]) == {"news", "manager", "daily"}
     kv_set("ai_status", {"ok": False, "error": "chave inválida", "at": "agora"})
     assert c.get("/api/settings").json()["ai"]["last"]["error"] == "chave inválida"
+
+
+def test_ai_plan_reused_while_the_best_candidates_stay_the_same(office):
+    """Pontuação que oscila a cada candle não gasta outra chamada de IA; candidato novo ou direção nova, sim."""
+    manager = office.agent("manager")
+
+    def cand(pid: int, score: float, direction: str = "both", blocked: list | None = None) -> dict:
+        return {"profile_id": pid, "score": score, "suggested_direction": direction, "blocked": blocked or [],
+                "symbol": f"S{pid}", "timeframe": "H1", "strategy": "x", "strategy_name": "X", "votes": {}}
+
+    base = [cand(i, 1.0 - i * 0.05) for i in range(1, 11)]
+    manager._ai_cache = {"at": time.time(), "fingerprint": manager._fingerprint(base),
+                         "picks": [(1, "both", 1.0, "a"), (2, "long", 0.5, "b")], "rationale": "r", "model": "m"}
+
+    wobble = [dict(c, score=c["score"] + (0.04 if c["profile_id"] % 2 else -0.04)) for c in base]
+    wobble.sort(key=lambda c: c["score"], reverse=True)
+    reused = manager._reuse_ai_plan(wobble)
+    assert reused is not None
+    assert [(p["profile_id"], p["direction"], p["risk_mult"]) for p in reused[0]] == [(1, "both", 1.0), (2, "long", 0.5)]
+
+    # fora do topo, mexer não muda nada
+    assert manager._reuse_ai_plan(base[:-1] + [cand(99, 0.1)]) is not None
+    # candidato novo no topo, direção nova, escolhido bloqueado ou plano vencido → chama a IA de novo
+    assert manager._reuse_ai_plan([cand(50, 2.0)] + base) is None
+    assert manager._reuse_ai_plan([cand(1, 0.95, "short")] + base[1:]) is None
+    assert manager._reuse_ai_plan([cand(1, 0.95, blocked=["hora fraca"])] + base[1:]) is None
+    dropped = sorted([dict(c, score=0.1) if c["profile_id"] == 2 else c for c in base], key=lambda c: c["score"], reverse=True)
+    assert manager._reuse_ai_plan(dropped) is None  # escolhido saiu do topo
+    manager._ai_cache["at"] = time.time() - 2 * 3600
+    assert manager._reuse_ai_plan(base) is None

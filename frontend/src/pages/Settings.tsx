@@ -117,7 +117,7 @@ const SECTIONS: Section[] = [
       { key: "min_hour_quality", label: "Qualidade mínima do horário", min: 0, max: 1, hint: "O Hugo dá nota de 0 a 1 para cada hora de cada ativo (volume e movimento). Abaixo desta nota o setup fica bloqueado. 0 = opera em qualquer hora." },
       { key: "use_news_filter", label: "Usar as notícias da Nina", type: "switch", hint: "Notícias fortes definem a direção (só compra ou só venda) e vetam entradas contra elas." },
       { key: "news_block_threshold", label: "Força da notícia que veta", min: 0.1, max: 1, hint: "Quão forte (0 a 1) a notícia precisa ser para vetar uma entrada contrária. Menor = veta mais vezes." },
-      { key: "ai_plan_refresh_minutes", label: "Validade do plano da IA", int: true, min: 15, max: 720, suffix: "min", hint: "Economia: se nada mudou nos candidatos, o Gustavo reaproveita o último plano da IA em vez de chamar de novo." },
+      { key: "ai_plan_refresh_minutes", label: "Validade do plano da IA", int: true, min: 15, max: 720, suffix: "min", hint: "Economia: enquanto os melhores candidatos forem os mesmos (mesmo que a pontuação mude um pouco), o Gustavo reaproveita o último plano da IA em vez de chamar de novo." },
     ],
   },
   {

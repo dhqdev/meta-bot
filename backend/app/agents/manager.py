@@ -323,22 +323,33 @@ class ManagerAgent(Agent):
         return plan, res.data.rationale[:800], res.model
 
     @staticmethod
-    def _fingerprint(cands: list[dict]) -> list:
-        return [(c["profile_id"], c["suggested_direction"], c["blocked"], round(c["score"], 1)) for c in cands[:15]]
+    def _fingerprint(cands: list[dict]) -> dict[int, str]:
+        """Candidatos livres que a IA viu (os 15 primeiros) e a direção sugerida de cada um."""
+        return {c["profile_id"]: c["suggested_direction"] for c in [c for c in cands if not c["blocked"]][:15]}
 
     def _reuse_ai_plan(self, cands: list[dict]) -> tuple[list[dict], str, str] | None:
-        """Plano da IA ainda válido (mesmos candidatos e dentro da validade) → não gasta outra chamada."""
+        """Plano da IA ainda válido → não gasta outra chamada.
+
+        A pontuação oscila a cada candle e a ordem dos candidatos muda junto; isso sozinho não justifica
+        perguntar de novo. Chama a IA outra vez só se o plano venceu, se um escolhido saiu do topo, ficou
+        bloqueado ou mudou de direção, ou se apareceu no topo um candidato que a IA ainda não tinha visto.
+        """
         cache = self._ai_cache
         cfg = get_config()
         if not cache or time.time() - cache["at"] > cfg.ai_plan_refresh_minutes * 60:
             return None
-        if cache["fingerprint"] != self._fingerprint(cands):
+        seen = cache["fingerprint"]
+        free = [c for c in cands if not c["blocked"]]
+        if any(seen.get(c["profile_id"]) != c["suggested_direction"] for c in free[: cfg.max_active_setups]):
+            return None
+        top = {c["profile_id"] for c in free[: max(6, 2 * cfg.max_active_setups)]}
+        if any(pid not in top for pid, *_ in cache["picks"]):
             return None
         by_profile = {c["profile_id"]: c for c in cands}
         plan = []
         for pid, direction, risk_mult, reason in cache["picks"]:
             c = by_profile.get(pid)
-            if c is None or c["blocked"]:
+            if c is None or c["blocked"] or seen.get(pid) != c["suggested_direction"]:
                 return None
             plan.append(self._setup(c, direction, risk_mult, reason))
         return plan, cache["rationale"], cache["model"]

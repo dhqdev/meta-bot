@@ -66,7 +66,7 @@ O que muda no dia seguinte (provado em `tests/test_next_day.py`): hora evitada b
 
 ```bash
 # backend (venv com requirements-dev.txt)
-cd backend && python -m pytest -q                      # ~151 testes, SQLite temporário, sem rede
+cd backend && python -m pytest -q                      # ~152 testes, SQLite temporário, sem rede
 cd backend && python scripts/verificar_sistema.py --minutos 5   # escritório com preços reais (precisa de internet)
 MB_ADMIN_EMAIL=voce@exemplo.com MB_ADMIN_PASSWORD=UmaSenhaForte123 uvicorn app.main:app --reload
 
