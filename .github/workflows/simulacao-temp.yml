@@ -1,0 +1,32 @@
+# Temporário (só neste ramo): 60 dias úteis com preços reais, aprovação só com dados de antes de cada bloco.
+name: Simulação fora da amostra
+
+on:
+  push:
+    branches: [claude/project-thread-sq99v4]
+    paths: ["backend/scripts/simular_fora_da_amostra.py", ".github/workflows/simulacao-temp.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  simular:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        blocos: ["3", "12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Instalar dependências
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Simular
+        working-directory: backend
+        run: python scripts/simular_fora_da_amostra.py --dia 2026-10-05 --dias 60 --blocos ${{ matrix.blocos }}
