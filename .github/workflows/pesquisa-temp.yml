@@ -1,0 +1,28 @@
+# Temporário (só neste ramo): pesquisa de estratégias com preços reais.
+name: Pesquisa de estratégias
+
+on:
+  push:
+    branches: [claude/project-thread-sq99v4]
+    paths: ["backend/scripts/pesquisar_estrategias.py", ".github/workflows/pesquisa-temp.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  pesquisar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - name: Instalar dependências
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Pesquisar
+        working-directory: backend
+        run: python scripts/pesquisar_estrategias.py
