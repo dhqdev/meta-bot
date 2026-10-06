@@ -1,4 +1,4 @@
-# Temporário (só neste ramo): refaz 01/10, 02/10 e 05/10 com preços reais, regra atual x proposta.
+# Temporário (só neste ramo): refaz os últimos 20 dias úteis com preços reais, regra atual x proposta.
 name: Simulação dos últimos 3 dias
 
 on:
@@ -29,4 +29,4 @@ jobs:
         run: pip install -r requirements.txt
       - name: Refazer os dias
         working-directory: backend
-        run: python scripts/diagnosticar_entradas.py --dia 2026-10-05 --dias 3 ${{ matrix.regra }}
+        run: python scripts/diagnosticar_entradas.py --dia 2026-10-05 --dias 20 ${{ matrix.regra }}
