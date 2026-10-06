@@ -234,6 +234,7 @@ async def main() -> int:
     from app.core.backtest import CostModel
 
     parser = argparse.ArgumentParser()
+    parser.add_argument("--carteira", action="store_true", help="simula a carteira diária de índices e ouro com uma posição por ativo")
     parser.add_argument("--custo", choices=["atual", "raw", "zero"], default="atual",
                         help="atual: custos do simulado; raw: conta com spread baixo + comissão (tipo Pepperstone Razor); zero: sem custo (só para ver a vantagem bruta)")
     args = parser.parse_args()
@@ -269,6 +270,9 @@ async def main() -> int:
         return cache[key]
 
     line(f"== Custos: {args.custo} ==")
+    if args.carteira:
+        await carteira(data, strategist, hold_start)
+        return 0
     line(f"== Pesquisa de estratégias · preços: {market.source()} · últimos {HOLDOUT_DAYS} dias guardados para conferir ==")
     rows: list[dict] = []
     first_time: dict[str, float] = {}
@@ -334,6 +338,75 @@ async def main() -> int:
         avg = sum(r["exp"] * r["n"] for r in lst) / tot if tot else 0
         line(f"   {k}: {len(lst)} combinações · {sum(r['passed'] for r in lst)} passaram · média {avg:+.3f}R por operação")
     return 0
+
+
+# Carteira diária: as combinações de índices e ouro no D1 que passaram no período de escolha (sem olhar os 6 meses guardados)
+CARTEIRA = {
+    "índices": ["pullback", "cruzamento_medias", "nrtr", "supertrend", "squeeze", "ichimoku", "adx_dmi", "rsi2_compra", "setup_91", "price_action_engolfo"],
+    "ouro": ["donchian", "macd_histograma", "hilo_activator", "cruzamento_medias", "nrtr", "virada_mes"],
+}
+
+
+async def carteira(data, strategist, hold_start: float) -> None:
+    from app.core.strategies import REGISTRY
+
+    new = {s.key: s for s in NEW}
+    groups = {"índices": IDX, "ouro": GOLD}
+    all_trades = []
+    for group, keys in CARTEIRA.items():
+        for sym in groups[group]:
+            got = await data(sym, "D1")
+            if got is None:
+                continue
+            bars, costs = got
+            cands = []
+            for prio, key in enumerate(keys):
+                if key in new:
+                    spec = new[key]
+                    sigs, risk, long_only = spec.fn(bars, {}), spec.risk, spec.long_only
+                else:
+                    strat = next(s for s in REGISTRY.values() if s.key.startswith(key))
+                    sigs, risk, long_only = strat.signals(bars, strat.defaults()), strategist.risk_for(strat.key, None, "H4"), False
+                for t in run_backtest(bars, sigs, RiskParams.from_dict(risk), costs, allow_short=not long_only, warmup=210):
+                    cands.append((t.entry_time, prio, t.exit_time, t.r, key))
+            busy_until = 0
+            for entry, prio, exit_, r, key in sorted(cands):
+                if entry < busy_until:
+                    continue  # já tem posição neste ativo
+                busy_until = exit_
+                all_trades.append((exit_, entry, sym, key, r))
+    all_trades.sort()
+    if not all_trades:
+        line("   sem operações")
+        return
+    first = datetime.fromtimestamp(all_trades[0][1], timezone.utc)
+    years = defaultdict(list)
+    for exit_, entry, sym, key, r in all_trades:
+        years[datetime.fromtimestamp(exit_, timezone.utc).year].append(r)
+    line(f"== Carteira diária (índices + ouro, uma posição por ativo) desde {first:%m/%Y} ==")
+    acc = peak = dd = 0.0
+    for _, _, _, _, r in all_trades:
+        acc += r
+        peak = max(peak, acc)
+        dd = min(dd, acc - peak)
+    weeks = (all_trades[-1][0] - all_trades[0][1]) / (7 * 86400)
+    rs = [x[4] for x in all_trades]
+    line(f"   {len(rs)} operações ({len(rs) / weeks:.1f} por semana) · acerto {sum(1 for r in rs if r > 0) / len(rs):.0%} · {np.mean(rs):+.3f}R/op · soma {sum(rs):+.1f}R · maior queda {dd:+.1f}R")
+    for y in sorted(years):
+        v = years[y]
+        line(f"   {y}: {len(v):3d} op · soma {sum(v):+6.1f}R · {np.mean(v):+.3f}R/op")
+    hold = [x[4] for x in all_trades if x[1] >= hold_start]
+    acc = peak = dd = 0.0
+    for r in hold:
+        acc += r
+        peak = max(peak, acc)
+        dd = min(dd, acc - peak)
+    line(f"   últimos 6 meses (guardados): {len(hold)} op · soma {sum(hold):+.1f}R · {np.mean(hold) if hold else 0:+.3f}R/op · maior queda {dd:+.1f}R")
+    by_key = defaultdict(list)
+    for x in all_trades:
+        by_key[(x[2], x[3])].append(x[4])
+    for (sym, key), v in sorted(by_key.items()):
+        line(f"     {sym:7s} {key:22s} {len(v):4d} op · {np.mean(v):+.3f}R/op · soma {sum(v):+.1f}R")
 
 
 if __name__ == "__main__":
