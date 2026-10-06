@@ -300,7 +300,6 @@ class ManagerAgent(Agent):
 
     async def ai_plan(self, cands: list[dict]) -> tuple[list[dict] | None, str, str]:
         cfg = get_config()
-        risk = self.office.agent("risk").status()
         schedule = self.office.agent("schedule")
         # todas as lições valem aqui: a Estela, a Rita e o Hugo não usam IA, quem aplica é o Gustavo
         lessons = "\n".join(f"- ({l['agent']}) {l['text']}" for l in active_lessons(None, 12)) or "- (nenhuma ainda)"
@@ -318,7 +317,7 @@ class ManagerAgent(Agent):
             f"Limite de setups ativos: {cfg.max_active_setups} (no máximo {cfg.max_setups_per_symbol} por ativo). Ordenação preferida pelo dono: {cfg.rank_by}.\n"
             f"Sessões abertas: {', '.join(self.office.office_info.get('sessions') or []) or 'nenhuma'}.\n"
             f"Eventos de alto impacto nas próximas 6 h: {to_json(schedule.upcoming(6, ['High']))}\n"
-            f"Risco: {to_json(risk)}\n"
+            f"Risco e metas do dia (cada número com a sua unidade: R$/US$ é dinheiro, % é porcentagem):\n{self.office.agent('risk').summary_for_ai()}\n"
             f"Foco combinado na daily de ontem: {focus}.\n"
             f"Candidatos (já filtrados pela Estrategista; 'blocked' não pode ser escolhido):\n{to_json(top)}"
         )
@@ -346,6 +345,14 @@ class ManagerAgent(Agent):
             used[c["symbol"]] += 1
             plan.append(self._setup(c, pick.direction, pick.risk_mult, pick.reason))
         return plan, res.data.rationale[:800], res.model
+
+    def _invented_day_stop(self, rationale: str, cands: list[dict]) -> bool:
+        """Plano vazio da IA justificado por meta/limite do dia, com o dia aberto e candidatos livres."""
+        risk = self.office.agent("risk").status()
+        if risk.get("day_blocked") or not any(not c["blocked"] for c in cands):
+            return False
+        text = (rationale or "").lower()
+        return any(k in text for k in ("meta do dia", "meta de ganho", "meta diária", "limite de perda", "limite do dia", "encerrar o dia", "encerrar as opera"))
 
     @staticmethod
     def _fingerprint(cands: list[dict]) -> dict[int, str]:
@@ -405,6 +412,11 @@ class ManagerAgent(Agent):
                 if plan is None:
                     self.log(f"IA indisponível para o plano ({rationale}); usei a pontuação da equipe", kind="decision", level="warning")
                     rationale = ""
+                    self._ai_cache = None
+                elif not plan and self._invented_day_stop(rationale, cands):
+                    # a IA "encerrou o dia" sem a Rita ter encerrado (ex.: leu R$ 4,16 como 4,16%): vale a regra
+                    self.log(f"A IA quis parar o dia sem a meta ou o limite terem sido batidos ({rationale[:120]}); segui com a pontuação da equipe", kind="decision", level="warning")
+                    plan, rationale = None, ""
                     self._ai_cache = None
                 else:
                     ai_used = True

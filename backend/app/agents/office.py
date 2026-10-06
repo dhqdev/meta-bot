@@ -29,6 +29,7 @@ from app.db import session_scope
 from app.events import bus, record_activity
 from app.kv import kv_get, kv_set
 from app.core.market_hours import all_closed, next_open
+from app.core.units import money_text
 from app.models import KV, EquitySnapshot, Lesson, Signal, StrategyProfile, Trade
 from app.runtime import get_config, update_config
 from app.services.llm import LLMService
@@ -368,7 +369,7 @@ class Office:
             risk.tell("manager", "❌ " + risk.line("veto", reason=verdict.reason[:90]), kind="resposta")
             return None
         risk.work(f"Lote {verdict.volume:g} ({verdict.risk_pct:.2f}% de risco)".replace(".", ","), "agent:cashier", "🛡️")
-        risk.tell("cashier", "🛡️ " + risk.line("lot", volume=f"{verdict.volume:g}", symbol=data["symbol"], risk=f"{verdict.risk_money:.2f}".replace(".", ",")), kind="pedido")
+        risk.tell("cashier", "🛡️ " + risk.line("lot", volume=f"{verdict.volume:g}", symbol=data["symbol"], risk=money_text(verdict.risk_money, self.market.account_currency())), kind="pedido")
         with session_scope() as s:
             sig = s.get(Signal, signal_id)
             if sig is not None:

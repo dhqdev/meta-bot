@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import json
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -21,6 +23,7 @@ from app.agents.base import Agent, AgentProfile
 from app.agents.skills import SkillDef
 from app.config import get_settings
 from app.core.risk import exposure, position_size
+from app.core.units import limit_text, money_text, pct_text
 from app.db import session_scope
 from app.kv import kv_get, kv_set
 from app.models import Trade
@@ -159,7 +162,7 @@ class RiskAgent(Agent):
         st["day_stop"] = kind
         st["day_stop_pnl"] = round(day_pnl, 2)
         self.save_state(st)
-        pnl_txt = f"{day_pnl:+.2f} {currency}".strip().replace(".", ",")
+        pnl_txt = money_text(day_pnl, currency, signed=True)
         if kind == "target":
             self.set_state("alert", "desk", f"Meta do dia batida ({pnl_txt}): equipe parada até amanhã", "🎯")
             self.tell("all", self.line("target", pnl=pnl_txt), kind="comemoracao", data={"pnl": day_pnl})
@@ -185,6 +188,37 @@ class RiskAgent(Agent):
         if st.get("day_key", "").split(":")[-1] != self._today_start().date().isoformat():
             return None  # virou o dia e o guarda ainda não rodou
         return st.get("day_stop") or "loss"
+
+    def summary_for_ai(self) -> str:
+        """Risco do dia em texto, com a unidade escrita em cada número: a IA confundia R$ 4,16 com 4,16%."""
+        st = self.status()
+        cfg = get_config()
+        cur = st.get("currency") or ""
+        if "day_pnl" not in st:
+            return f"Ainda sem números do dia. Limite de perda configurado: {limit_text(cfg.daily_loss_limit, cfg.daily_loss_unit, cur)}."
+        lines = [
+            f"- Resultado do dia: {money_text(st['day_pnl'], cur, signed=True)} ({pct_text(st['day_pct'], signed=True)} do patrimônio do início do dia, {money_text(st['day_start_equity'], cur)}).",
+        ]
+        if st.get("daily_target_money"):
+            lines.append(
+                f"- Meta de ganho do dia: {money_text(st['daily_target_money'], cur)} ({limit_text(cfg.daily_profit_target, cfg.daily_profit_unit, cur)}); "
+                f"já feito: {pct_text((st.get('target_progress') or 0) * 100)} da meta."
+            )
+        else:
+            lines.append("- Meta de ganho do dia: desligada.")
+        if st.get("daily_loss_money"):
+            room = st.get("daily_room_money")
+            lines.append(f"- Limite de perda do dia: {money_text(st['daily_loss_money'], cur)} ({limit_text(cfg.daily_loss_limit, cfg.daily_loss_unit, cur)}); ainda cabe perder {money_text(room or 0, cur)}.")
+        lines.append(f"- Posições abertas: {st.get('open_positions', 0)} de no máximo {st.get('max_positions')}. Multiplicador de risco atual: {st.get('adaptive_mult', 1)}.")
+        lines.append(f"- Queda desde o pico: {pct_text(st.get('drawdown_pct') or 0)} (trava geral em {pct_text(cfg.max_drawdown_pct)}).")
+        if st.get("kill_switch"):
+            lines.append("- TRAVA GERAL ATIVA: nenhuma entrada.")
+        if st.get("day_blocked"):
+            lines.append("- DIA ENCERRADO pela Rita (meta ou limite batido).")
+        else:
+            lines.append("- O dia está ABERTO: quem encerra o dia pela meta ou pelo limite é a Rita, pela regra; não encerre o dia por conta própria.")
+        lines.append(f"- Exposição por moeda: {json.dumps(st.get('exposure') or {}, ensure_ascii=False)}.")
+        return "\n".join(lines)
 
     def status(self) -> dict:
         if not self._status:
@@ -286,4 +320,5 @@ class RiskAgent(Agent):
         self.save_state(st)
         self.log("Trava geral liberada pelo dono do sistema", kind="risk")
         self.idle("Vigiando o risco")
+
 

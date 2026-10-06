@@ -24,6 +24,7 @@ from app.broker.execution import LiveBroker, PaperBroker
 from app.config import get_settings
 from app.core.backtest import RiskParams, simulate_exit
 from app.core.risk import pnl_money, value_per_price_unit
+from app.core.units import money_text, num
 from app.db import session_scope
 from app.events import bus
 from app.models import EquitySnapshot, Signal, Trade
@@ -231,7 +232,7 @@ class CashierAgent(Agent):
         verb = "Comprei" if d > 0 else "Vendi"
         bus.publish({"type": "trade", "event": "opened", "trade": data})
         self.say("✅ " + self.line("opened", verb=verb, volume=f"{data['volume']:g}", symbol=symbol, price=f"{fill:g}", sl=f"{sl:g}"), "💸")
-        self.log(f"{verb} {data['volume']:g} de {symbol} a {fill:g} ({'simulado' if mode == 'paper' else 'conta da corretora'}). Stop {sl:g}, alvo {tp if tp else '—'}. Risco {risk_money:.2f}.", kind="trade")
+        self.log(f"{verb} {data['volume']:g} de {symbol} a {fill:g} ({'simulado' if mode == 'paper' else 'conta da corretora'}). Stop {sl:g}, alvo {tp if tp else '—'}. Risco {money_text(risk_money, self.office.market.account_currency())}.", kind="trade")
         self.skills.gain("execucao", 3, f"ordem em {symbol}")
         self.idle("Acompanhando as posições")
         return trade_id
@@ -558,9 +559,9 @@ class CashierAgent(Agent):
             s.expunge(tr)
         bus.publish({"type": "trade", "event": "closed", "trade": data})
         emoji = "🟢" if data["pnl"] > 0 else "🔴"
-        pnl_txt = f"{data['pnl']:+.2f} ({data['pnl_r']:+.2f}R)".replace(".", ",")
+        pnl_txt = f"{money_text(data['pnl'], self.office.market.account_currency(), signed=True)} ({'+' if data['pnl_r'] >= 0 else '−'}{num(data['pnl_r'])}R)"
         self.say(f"{emoji} " + self.line("closed_win" if data["pnl"] > 0 else "closed_loss", symbol=data["symbol"], pnl=pnl_txt), emoji)
-        self.log(f"Operação #{trade_id} em {data['symbol']} encerrada por {reason}: {data['pnl']:+.2f} ({data['pnl_r']:+.2f}R)".replace(".", ","), kind="trade")
+        self.log(f"Operação #{trade_id} em {data['symbol']} encerrada por {reason}: {pnl_txt}", kind="trade")
         if reason in ("be", "trailing") or (reason == "sl" and data["pnl_r"] >= -1.2):
             self.skills.gain("protecao", 3, "perda contida no planejado")
         if reason in ("be", "trailing") and data["pnl_r"] > -0.1:

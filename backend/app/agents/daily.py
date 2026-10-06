@@ -449,7 +449,7 @@ class DailyMeeting:
         llm = self.office.llm
         if not llm.available():
             return None, "", "IA desligada ou sem chave"
-        compact = {k: v for k, v in data.items() if k not in ("trades", "horizons")}
+        compact = {k: v for k, v in data.items() if k not in ("trades", "horizons", "risk")}
         compact["trades"] = [{k: t[k] for k in ("symbol", "strategy_name", "timeframe", "direction", "r", "exit", "entry_hour_local", "horizon")} for t in data["trades"][:40]]
         compact["horizons"] = [{k: h[k] for k in ("label", "approved", "bt_oos_expectancy_r", "live_trades", "live_r")} for h in data["horizons"]["horizons"]]
         lessons = "\n".join(f"- ({l['agent']}) {l['text']}" for l in active_lessons(None, 8)) or "- (nenhuma)"
@@ -460,6 +460,8 @@ class DailyMeeting:
             + "\n\n## Lições que já estão valendo\n" + lessons
         )
         user = (
+            f"Unidades: 'pnl' é dinheiro em {data['currency']}; 'r' é múltiplo do risco de cada operação; 'win_rate' é fração (0,6 = 60%). Nunca chame dinheiro de porcentagem.\n\n"
+            f"Risco e metas do dia:\n{self.office.agent('risk').summary_for_ai()}\n\n"
             f"Números do dia:\n{to_json(compact)}\n\n"
             f"Análise de cada agente:\n{to_json(sections)}\n\n"
             f"Ajustes já decididos para amanhã:\n{to_json(adjustments)}"

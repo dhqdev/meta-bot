@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { MessageRow, TEAM_ORDER, TeamChat } from "../components/Chat";
 import { AGENT_COLORS, AGENT_NAMES, Avatar, Badge, Bar, Card, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { cash, dateTime, DIRECTION_LABEL, pct, signed, signedCash, time } from "../lib/format";
+import { cash, dateTime, DIRECTION_LABEL, num, pct, signed, signedCash, time } from "../lib/format";
 import { onLiveEvent, useLive } from "../lib/live";
 import { OfficeCanvas } from "../office/OfficeCanvas";
 
@@ -76,7 +76,7 @@ export function OfficePage() {
           <OfficeCanvas selected={selected} onSelect={pick} />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <Stat label="Patrimônio" value={cash(acc.equity, acc.currency)} hint={live.system.mode === "live" ? "conta da corretora" : "conta simulada"} tone="gold" />
-            <Stat label="Hoje" value={signedCash(today, acc.currency || risk.currency)} hint={risk.day_pct != null ? `${signed(risk.day_pct)}% no dia` : undefined} tone={(today ?? 0) >= 0 ? "up" : "down"} />
+            <Stat label="Hoje" value={signedCash(today, acc.currency || risk.currency)} hint={risk.day_pct != null ? `${signed(risk.day_pct)}% do patrimônio` : undefined} tone={(today ?? 0) >= 0 ? "up" : "down"} />
             <Stat label="Acerto (30 dias)" value={pct(summary.data?.win_rate)} hint={`${summary.data?.trades ?? 0} operações`} />
             <Stat label="Posições abertas" value={open.data?.length ?? 0} hint={`limite ${risk.max_positions ?? "—"}`} />
           </div>
@@ -226,6 +226,9 @@ function TeamStrip({ selected, onPick }: { selected?: string; onPick: (id: strin
   );
 }
 
+/** Quando a meta/limite foi configurada em %, mostra a porcentagem ao lado do valor em dinheiro. */
+const goalUnit = (value: unknown, unit: unknown) => (unit === "percent" && Number(value) > 0 ? ` (${num(Number(value))}% do dia)` : "");
+
 /** Meta de ganho e limite de perda do dia (a equipe para quando bate um dos dois). */
 function DayGoals() {
   const risk = useLive().office.risk || {};
@@ -258,14 +261,14 @@ function DayGoals() {
         <div>
           <div className="mb-1 flex justify-between gap-2 text-xs">
             <span className="text-slate-300">Meta de ganho</span>
-            <span className="tabular-nums text-muted">{target > 0 ? `${signedCash(Math.max(0, pnl), cur)} de ${signedCash(target, cur)}` : "sem meta (opera o dia todo)"}</span>
+            <span className="tabular-nums text-muted">{target > 0 ? `${cash(Math.max(0, pnl), cur)} de ${cash(target, cur)}${goalUnit(risk.daily_profit_target, risk.daily_profit_unit)}` : "sem meta (opera o dia todo)"}</span>
           </div>
           <Bar value={target > 0 ? Math.max(0, pnl) / target : 0} tone="green" />
         </div>
         <div>
           <div className="mb-1 flex justify-between gap-2 text-xs">
             <span className="text-slate-300">Limite de perda</span>
-            <span className="tabular-nums text-muted">{loss > 0 ? `${pnl < 0 ? "−" : ""}${cash(Math.max(0, -pnl), cur)} de −${cash(loss, cur)}` : "sem limite diário"}</span>
+            <span className="tabular-nums text-muted">{loss > 0 ? `${pnl < 0 ? "−" : ""}${cash(Math.max(0, -pnl), cur)} de −${cash(loss, cur)}${goalUnit(risk.daily_loss_limit, risk.daily_loss_unit)}` : "sem limite diário"}</span>
           </div>
           <Bar value={loss > 0 ? Math.max(0, -pnl) / loss : 0} tone="red" />
         </div>
@@ -384,7 +387,7 @@ function PlanPanel() {
             <span className="flex-1">
               {r.strategy_name} · {r.symbol} {r.timeframe}
             </span>
-            <span className="tabular-nums text-up">{pct(r.metrics?.win_rate)}</span>
+            <span className="tabular-nums text-up" title="Acerto no teste">acerto {pct(r.metrics?.win_rate)}</span>
           </div>
         ))}
         <Link to="/estrategias" className="mt-2 inline-block text-xs text-sky hover:underline">
