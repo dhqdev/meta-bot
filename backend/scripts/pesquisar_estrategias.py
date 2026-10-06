@@ -229,6 +229,14 @@ def summarize(name: str, res: Result, seg_edges: list[float]) -> dict:
 
 
 async def main() -> int:
+    import argparse
+
+    from app.core.backtest import CostModel
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--custo", choices=["atual", "raw", "zero"], default="atual",
+                        help="atual: custos do simulado; raw: conta com spread baixo + comissão (tipo Pepperstone Razor); zero: sem custo (só para ver a vantagem bruta)")
+    args = parser.parse_args()
     settings = get_settings()
     set_secret_box(SecretBox(settings.secret_key))
     configure(settings.resolved_database_url)
@@ -248,13 +256,19 @@ async def main() -> int:
         if key not in cache:
             try:
                 bars = await market.rates(symbol, tf, COUNT[tf], closed_only=True, max_age=86400)
-                costs = strategist.costs(await market.spec(symbol))
+                spec = await market.spec(symbol)
+                costs = strategist.costs(spec)
+                if args.custo == "zero":
+                    costs = CostModel(spread=0.0, slippage=0.0, commission=0.0)
+                elif args.custo == "raw" and symbol in FX:
+                    costs = CostModel(spread=3 * spec["point"], slippage=costs.slippage / 2, commission=costs.commission)
                 cache[key] = (bars, costs) if bars.n > 300 else None
             except Exception as exc:  # noqa: BLE001
                 line(f"   ! sem dados de {symbol} {tf}: {exc}")
                 cache[key] = None
         return cache[key]
 
+    line(f"== Custos: {args.custo} ==")
     line(f"== Pesquisa de estratégias · preços: {market.source()} · últimos {HOLDOUT_DAYS} dias guardados para conferir ==")
     rows: list[dict] = []
     first_time: dict[str, float] = {}
