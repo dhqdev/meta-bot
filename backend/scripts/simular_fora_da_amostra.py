@@ -65,6 +65,13 @@ POLICIES = {
 }
 
 
+CARTEIRA_ATIVOS = ["US500", "NAS100", "US30", "GER40", "XAUUSD"]
+CARTEIRA_ESTRATEGIAS = [
+    "cruzamento_medias", "supertrend", "adx_dmi", "nrtr", "ichimoku_4regras", "squeeze_rompimento", "setup_91",
+    "price_action_engolfo", "donchian_turtle", "macd_histograma", "hilo_activator", "rsi2_compra", "virada_mes", "correcao_tendencia",
+]
+
+
 def drawdown(values: list[float]) -> float:
     peak = acc = worst = 0.0
     for v in values:
@@ -79,6 +86,7 @@ async def main() -> int:
     parser.add_argument("--dia", default="", help="último dia, AAAA-MM-DD (padrão: ontem em Brasília)")
     parser.add_argument("--dias", type=int, default=60, help="quantos dias úteis simular, voltando a partir de --dia")
     parser.add_argument("--blocos", type=int, default=3, help="em quantos blocos a Estela refaz o ranking")
+    parser.add_argument("--carteira", action="store_true", help="índices e ouro no gráfico diário, com as estratégias da carteira")
     parser.add_argument("--proposta", action="store_true", help="aprovação com 15+ operações fora da amostra e ranking por expectativa")
     args = parser.parse_args()
     if args.proposta:
@@ -117,6 +125,10 @@ async def main() -> int:
         from app.runtime import update_config
 
         update_config({"rank_by": "expectancy"})
+    if args.carteira:
+        from app.runtime import update_config
+
+        update_config({"watchlist": CARTEIRA_ATIVOS, "timeframes": ["D1"], "enabled_strategies": CARTEIRA_ESTRATEGIAS})
     cfg = get_config()
     strategist = office.agent("strategist")
     schedule = office.agent("schedule")
@@ -144,6 +156,7 @@ async def main() -> int:
     results: dict[str, dict[date, list[float]]] = {name: {day: [] for day in days} for name in POLICIES}
     signals_seen: dict[str, int] = Counter()
     real_hour = schedule.hour_quality
+    blocked_why: Counter = Counter()
     for block in blocks:
         start, end = day_start(block[0]), day_start(block[-1]) + timedelta(days=1)
         cut["ts"] = start.timestamp()
@@ -196,6 +209,9 @@ async def main() -> int:
                     cands = manager.build_candidates()
                 finally:
                     manager_mod.datetime = datetime
+                for c in cands:
+                    for why in c["blocked"]:
+                        blocked_why[why.split(" (")[0]] += 1
                 for name, rule in POLICIES.items():
                     ids = {c["profile_id"] for c in rule(cands)}
                     for pid in ids:
@@ -211,6 +227,7 @@ async def main() -> int:
             line(f"   {name:40s} {len(rs):3d} entradas ({len(rs) / len(block):.1f}/dia) · acerto {wins / len(rs) if rs else 0:.0%} · soma {sum(rs):+.2f}R")
 
     line("")
+    line(f"   candidatos bloqueados (hora a hora): {dict(blocked_why.most_common(5))}")
     line(f"== Total dos {len(days)} dias (tudo fora da amostra) ==")
     for name in POLICIES:
         per_day = [sum(results[name][day]) for day in days]
