@@ -136,6 +136,7 @@ class CashierAgent(Agent):
                 "sl": sig.sl, "tp": sig.tp, "profile_id": sig.profile_id, "expires_at": sig.expires_at,
                 "volume": volume, "risk_money": risk_money, "risk_pct": risk_pct, "votes": votes,
                 "max_bars": int((sig.context or {}).get("max_bars") or 0),
+                "exits": (sig.context or {}).get("exits") or {},
             }
             if sig.entry_type == "stop":
                 sig.status = "aguardando"
@@ -213,6 +214,8 @@ class CashierAgent(Agent):
                 self.log(f"Não consegui ajustar o stop de {symbol} ao preço executado ({moved.message or 'recusado'}); mantive {sl:g}.", kind="order", level="warning")
         risk_money = info["volume"] * dist_sl * value_per_price_unit(spec)
         ctx = {"votes": info["votes"], "risk_pct": info["risk_pct"], "max_bars": info.get("max_bars") or 0}
+        if info.get("exits"):
+            ctx["exits"] = info["exits"]
         with session_scope() as s:
             tr = Trade(
                 mode=mode, terminal_id=(self.office.terminals.active() or {}).get("id") if mode == "live" else None,
@@ -317,7 +320,7 @@ class CashierAgent(Agent):
                 return
         if not tick.get("open", True):
             return
-        exits = self.office.exit_params()
+        exits = {**self.office.exit_params(), **((tr.context or {}).get("exits") or {})}
         risk_px = abs(tr.entry_price - (tr.initial_sl or tr.entry_price))
         mg = dict(tr.mgmt or {})
         new_sl = None

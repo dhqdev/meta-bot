@@ -82,6 +82,12 @@ def _profile_risk(risk: dict, timeframe: str) -> dict:
     return out
 
 
+def own_exits(strat) -> dict:
+    """Gestão de saída própria da estratégia (zero a zero e trailing), quando ela define; vai junto no sinal até a operação."""
+    own = {k: float(strat.risk[k]) for k in ("break_even_r", "trailing_start_r") if k in strat.risk}
+    return {"exits": own} if own else {}
+
+
 class StrategistAgent(Agent):
     profile = AgentProfile(
         id="strategist",
@@ -140,8 +146,9 @@ class StrategistAgent(Agent):
         return {
             "sl_atr": base.get("sl_atr", 1.5),
             "tp_r": base.get("tp_r", 2.0),
-            "break_even_r": exits["break_even_r"],
-            "trailing_start_r": exits["trailing_start_r"],
+            # estratégia que define a própria gestão (ex.: as de gráfico diário, sem zero a zero) não usa a da equipe
+            "break_even_r": base.get("break_even_r", exits["break_even_r"]),
+            "trailing_start_r": base.get("trailing_start_r", exits["trailing_start_r"]),
             "trailing_atr": exits["trailing_atr"],
             "max_bars": cfg.max_bars_in_trade or int(base.get("max_bars") or 0) or DEFAULT_MAX_BARS.get(timeframe, 60),
         }
@@ -531,7 +538,7 @@ class StrategistAgent(Agent):
                 symbol=setup["symbol"], timeframe=setup["timeframe"], strategy=strat.key, direction=side,
                 entry_type=entry_type, price=price, trigger=trigger, sl=sl, tp=tp, atr=atr,
                 bar_time=int(bars.time[i]), profile_id=setup["profile_id"], decision_id=setup.get("decision_id"),
-                expires_at=expires, context={"risk_mult": setup.get("risk_mult", 1.0), "tp_r": risk.tp_r, "max_bars": risk.max_bars},
+                expires_at=expires, context={"risk_mult": setup.get("risk_mult", 1.0), "tp_r": risk.tp_r, "max_bars": risk.max_bars, **own_exits(strat)},
             )
             s.add(sig)
             s.flush()

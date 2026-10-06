@@ -142,7 +142,7 @@ def test_manual_backtest_endpoint(client):
     first = data["results"][0]
     assert {"metrics", "oos_metrics", "equity", "trades", "approved"} <= set(first)
     catalog = client.get("/api/strategies").json()
-    assert len(catalog["strategies"]) == 18 and {"Vilela One", "IndicatorSpot"} <= set(catalog["sources"])
+    assert len(catalog["strategies"]) == 21 and {"Vilela One", "IndicatorSpot"} <= set(catalog["sources"])
 
 
 def test_market_endpoints(client):

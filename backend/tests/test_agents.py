@@ -250,3 +250,35 @@ def test_break_even_waits_for_the_candle_close_like_the_backtest(office, running
             assert tr.mgmt.get("be") and tr.sl == pytest.approx(entry, abs=0.01) and tr.status == "open"
 
     asyncio.run(run())
+
+
+def test_strategy_with_its_own_exits_skips_team_break_even(office, running, monkeypatch):
+    """Estratégia de gráfico diário segura a posição: o zero a zero da equipe não vale para ela."""
+    async def run():
+        update_config({"break_even_r": 1.0, "trailing_start_r": 1.5, "adaptive_exits": False})
+        pid = make_profile()
+        activate_plan(office, pid)
+        trade_id = await office.submit_signal(await new_signal(office, pid))
+        cashier = office.agent("cashier")
+        with session_scope() as s:
+            tr = s.get(Trade, trade_id)
+            tr.context = {**(tr.context or {}), "exits": {"break_even_r": 0.0, "trailing_start_r": 0.0}}
+            entry, risk_px, entry_time, sl0 = tr.entry_price, abs(tr.entry_price - tr.initial_sl), tr.entry_time, tr.sl
+        tick = await office.market.tick(SYMBOL)
+        up = {**tick, "bid": entry + 1.8 * risk_px, "ask": entry + 1.8 * risk_px + 1}
+
+        async def fake_tick(symbol):
+            return up
+
+        async def closed_above(*a, **k):
+            return _bars_after(entry_time, [entry + 1.8 * risk_px])
+
+        monkeypatch.setattr(office.market, "tick", fake_tick)
+        monkeypatch.setattr(office.market, "rates", closed_above)
+        await cashier.monitor()
+        with session_scope() as s:
+            tr = s.get(Trade, trade_id)
+            assert not (tr.mgmt or {}).get("be") and not (tr.mgmt or {}).get("trailing")
+            assert tr.sl == pytest.approx(sl0) and tr.status == "open"
+
+    asyncio.run(run())

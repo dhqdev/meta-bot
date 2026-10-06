@@ -21,7 +21,7 @@ backend/app/
 │   ├── review.py        regras da revisão das posições abertas (decide, counterfactual, learn_patience)
 │   └── playbooks/       equipe.md (manual da equipe), manager.md, news.md, daily.md → prompts da IA
 ├── core/
-│   ├── indicators.py strategies.py   indicadores e as 18 estratégias (REGISTRY, get_strategy)
+│   ├── indicators.py strategies.py   indicadores e as 21 estratégias (REGISTRY, get_strategy)
 │   ├── backtest.py metrics.py        backtest honesto e métricas (inclui avg_minutes e horizon)
 │   ├── evaluation.py                 variantes, walk-forward, evolução (HORIZON_LABELS)
 │   ├── horizons.py                   scalper / day trade / posição longa

@@ -30,7 +30,7 @@ export function StrategiesPage() {
         <div>
           <h1 className="font-pixel text-sm text-gold">ESTRATÉGIAS</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted">
-            A Estela testa 18 estratégias (setups do Vilela One, indicadores do IndicatorSpot, setups brasileiros e clássicos) em cada ativo e tempo gráfico, com spread, slippage e comissão. Só aprova quem tem amostra suficiente e continua lucrando no período recente que não foi usado para escolher.
+            A Estela testa 21 estratégias (setups do Vilela One, indicadores do IndicatorSpot, setups brasileiros e clássicos, inclusive as de gráfico diário para índices e ouro) em cada ativo e tempo gráfico, com spread, slippage e comissão. Só aprova quem tem amostra suficiente e continua lucrando no período recente que não foi usado para escolher.
           </p>
         </div>
         <div className="flex gap-1 rounded-lg bg-panel p-1">

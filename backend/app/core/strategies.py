@@ -10,6 +10,7 @@ backtest executa na abertura seguinte com stop, alvo e custos.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable
 
 import numpy as np
@@ -315,6 +316,47 @@ def _stoch(b: Bars, p: dict) -> SignalSet:
     return SignalSet(long_entry, short_entry, long_exit, short_exit)
 
 
+def _rsi2_compra(b: Bars, p: dict) -> SignalSet:
+    c = b.close
+    r = ind.rsi(c, p["period"])
+    trend, fast = b.sma(p["trend"]), b.sma(p["exit_ma"])
+    z = np.zeros(b.n, dtype=bool)
+    with np.errstate(invalid="ignore"):
+        return SignalSet((c > trend) & (r < p["low"]), z, c > fast, z)
+
+
+def _next_weekday(day: date) -> date:
+    day += timedelta(days=1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    return day
+
+
+def _virada_mes(b: Bars, p: dict) -> SignalSet:
+    """Sinal no fechamento do pregão anterior ao último do mês (calendário de segunda a sexta)."""
+    le = np.zeros(b.n, dtype=bool)
+    for i, t in enumerate(b.time):
+        d1 = _next_weekday(datetime.fromtimestamp(int(t), timezone.utc).date())
+        le[i] = _next_weekday(d1).month != d1.month
+    z = np.zeros(b.n, dtype=bool)
+    return SignalSet(le, z, z, z)
+
+
+def _pullback(b: Bars, p: dict) -> SignalSet:
+    c = b.close
+    fast, slow = b.ema(p["fast"]), b.ema(p["slow"])
+    r = ind.rsi(c, 14)
+    with np.errstate(invalid="ignore"):
+        up = (fast > slow) & (c > slow)
+        dn = (fast < slow) & (c < slow)
+    z = np.zeros(b.n, dtype=bool)
+    return SignalSet(up & ind.cross_over(r, p["low"]), dn & ind.cross_under(r, 100 - p["low"]), z, z)
+
+
+# Estratégias de gráfico diário (pesquisa de 06/10/2026): seguram a posição sem zero a zero nem trailing,
+# como foram testadas; a gestão de saída da equipe não se aplica a elas.
+NO_MGMT = {"break_even_r": 0.0, "trailing_start_r": 0.0}
+
 P = Param
 
 STRATEGIES: list[Strategy] = [
@@ -443,6 +485,27 @@ STRATEGIES: list[Strategy] = [
         [P("k", "%K", 14, 5, 21, 1), P("d", "%D", 3, 2, 5, 1), P("smooth", "Suavização", 3, 1, 5, 1), P("low", "Sobrevenda", 20, 10, 30, 5), P("high", "Sobrecompra", 80, 70, 90, 5)],
         _stoch, {"sl_atr": 1.5, "tp_r": 1.5},
         "Saída no cruzamento contrário acima/abaixo de 50.",
+    ),
+    Strategy(
+        "rsi2_compra", "IFR(2) de Connors (só compra)", "Clássico", "reversão",
+        "Compra quedas curtas dentro da tendência de alta: IFR de 2 períodos abaixo de 10 com o preço acima da média de 200. Feita para índices no gráfico diário.",
+        [P("period", "Período do IFR", 2, 2, 4, 1), P("low", "IFR máximo para comprar", 10, 5, 20, 5), P("trend", "Média da tendência", 200, 150, 250, 50), P("exit_ma", "Média de saída", 5, 3, 10, 1)],
+        _rsi2_compra, {"sl_atr": 3.0, "tp_r": 0, "max_bars": 10, **NO_MGMT},
+        "Saída quando o preço fecha acima da média de 5 (ou em 10 candles). Sem alvo fixo.",
+    ),
+    Strategy(
+        "virada_mes", "Virada do mês", "Clássico", "calendário",
+        "Compra para o último pregão do mês e segura 4 pregões: o dinheiro novo que entra na bolsa na virada do mês costuma empurrar os índices.",
+        [],
+        _virada_mes, {"sl_atr": 4.0, "tp_r": 0, "max_bars": 4, **NO_MGMT},
+        "Só compra, só no gráfico diário. Saída por tempo (4 candles).",
+    ),
+    Strategy(
+        "correcao_tendencia", "Correção na tendência", "Clássico", "tendência",
+        "Média de 50 acima da de 200 (tendência de alta) e o IFR(14) volta a subir acima de 40 depois de uma correção. A venda é o espelho.",
+        [P("fast", "Média rápida", 50, 30, 80, 10), P("slow", "Média lenta", 200, 150, 250, 50), P("low", "IFR da correção", 40, 30, 45, 5)],
+        _pullback, {"sl_atr": 2.0, "tp_r": 2.0, "max_bars": 30, **NO_MGMT},
+        "Alvo de 2R, stop de 2 ATR, até 30 candles.",
     ),
 ]
 
