@@ -16,11 +16,12 @@ from app.services.llm import LLMService
 from tests.test_agents import SYMBOL, activate_plan, make_profile, running  # noqa: F401  (fixture)
 
 
-def approved(symbol: str, timeframe: str = "H1", strategy: str = "ifr_reversao") -> int:
+def approved(symbol: str, timeframe: str = "H1", strategy: str = "ifr_reversao", per_month: float = 20.0) -> int:
     with session_scope() as s:
         p = StrategyProfile(
             symbol=symbol, timeframe=timeframe, strategy=strategy, params={}, filters={}, risk={"sl_atr": 1.5, "tp_r": 2.0},
-            status="aprovada", score=0.8, metrics={"trades": 80, "win_rate": 0.6, "wilson_lb": 0.5, "expectancy_r": 0.2},
+            status="aprovada", score=0.8,
+            metrics={"trades": 80, "win_rate": 0.6, "wilson_lb": 0.5, "expectancy_r": 0.2, "trades_per_month": per_month},
             oos_metrics={"trades": 25, "expectancy_r": 0.1}, tested_at=datetime.now(timezone.utc),
         )
         s.add(p)
@@ -60,6 +61,32 @@ def test_max_active_setups_limits_the_plan(office, running):
     assert len(manager.deterministic_plan(manager.build_candidates())) == 1
     update_config({"max_active_setups": 3})
     assert len(manager.deterministic_plan(manager.build_candidates())) == 3
+
+
+def test_plan_can_watch_more_than_one_setup_per_pair(office, running):
+    """Mesmo par em tempos gráficos diferentes: até max_setups_per_symbol no plano (a Rita segue com uma posição por par)."""
+    approved(SYMBOL, "H1")
+    approved(SYMBOL, "H4", "supertrend")
+    approved(SYMBOL, "M15", "bollinger_reversao")
+    update_config({"watchlist": [SYMBOL], "timeframes": ["M15", "H1", "H4"], "min_hour_quality": 0.0, "max_active_setups": 6})
+    manager = office.agent("manager")
+    update_config({"max_setups_per_symbol": 2})
+    assert len(manager.deterministic_plan(manager.build_candidates())) == 2
+    update_config({"max_setups_per_symbol": 1})
+    assert len(manager.deterministic_plan(manager.build_candidates())) == 1
+
+
+def test_plan_prefers_setups_that_actually_trade(office, running):
+    """Mesma evidência: o setup que entra quase todo dia vem antes do que entra uma vez por semana."""
+    slow = approved(SYMBOL, "H4", "supertrend", per_month=4)
+    fast = approved("ETHUSD", "H1", per_month=22)
+    update_config({"watchlist": [SYMBOL, "ETHUSD"], "timeframes": ["H1", "H4"], "min_hour_quality": 0.0, "max_active_setups": 1})
+    manager = office.agent("manager")
+    cands = manager.build_candidates()
+    by_id = {c["profile_id"]: c for c in cands}
+    assert by_id[fast]["signals_per_day"] > 1 > by_id[slow]["signals_per_day"]
+    assert cands[0]["profile_id"] == fast
+    assert [p["profile_id"] for p in manager.deterministic_plan(cands)] == [fast]
 
 
 def test_news_filter_and_threshold_veto_signals(office, running, monkeypatch):
@@ -166,6 +193,7 @@ def test_settings_api_gives_friendly_errors(client_owner):
 def test_ai_plan_reused_while_the_best_candidates_stay_the_same(office):
     """Pontuação que oscila a cada candle não gasta outra chamada de IA; candidato novo ou direção nova, sim."""
     manager = office.agent("manager")
+    update_config({"max_active_setups": 3})
 
     def cand(pid: int, score: float, direction: str = "both", blocked: list | None = None) -> dict:
         return {"profile_id": pid, "score": score, "suggested_direction": direction, "blocked": blocked or [],

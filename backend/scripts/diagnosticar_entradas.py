@@ -2,11 +2,14 @@
 
 1. A Estela roda o ranking de verdade (10 pares, tempos gráficos da configuração).
 2. O Hugo mede a qualidade de cada hora.
-3. Para o dia escolhido (padrão: ontem, no horário de Brasília), conta os sinais que cada
+3. Para os dias escolhidos (padrão: ontem, no horário de Brasília), conta os sinais que cada
    estratégia aprovada deu candle a candle e quantos deles caíram num setup que o plano
-   do Gustavo estaria vigiando naquela hora (plano por pontuação, sem IA).
+   do Gustavo estaria vigiando naquela hora (plano por pontuação, sem IA), com a regra
+   antiga e a atual. "Operações" = entradas que o backtest fez de fato (uma por vez por setup)
+   e o resultado delas em R. O ranking usa o histórico de hoje, que inclui esses dias: serve
+   para comparar as regras, não como promessa de resultado.
 
-Uso (na pasta backend):  python scripts/diagnosticar_entradas.py --dia 2026-10-05
+Uso (na pasta backend):  python scripts/diagnosticar_entradas.py --dia 2026-10-05 --dias 10
 """
 
 from __future__ import annotations
@@ -42,31 +45,23 @@ def line(text: str = "") -> None:
     print(text, flush=True)
 
 
-def policy(cands: list[dict], limit: int, per_symbol: int, min_score: float = 0.45, activity: bool = False) -> list[dict]:
-    """Plano por pontuação com regras ajustáveis (para comparar alternativas)."""
-    def key(c):
-        if not activity:
-            return c["score"]
-        spd = float(c.get("tpm") or 0) / 21.4
-        return c["score"] * (0.75 + 0.25 * min(1.0, spd))
-    out, used = [], Counter()
-    for c in sorted(cands, key=key, reverse=True):
+def old_plan(cands: list[dict], limit: int = 3, min_score: float = 0.45) -> list[dict]:
+    """Regra antiga (até a v3 da configuração): 3 setups, um por par, pela pontuação sem olhar a frequência."""
+    out, used = [], set()
+    for c in sorted(cands, key=lambda c: c["score"], reverse=True):
         if len(out) >= limit:
             break
-        if c["blocked"] or used[c["symbol"]] >= per_symbol or c["score"] < min_score:
+        if c["blocked"] or c["symbol"] in used or c["score"] < min_score:
             continue
-        used[c["symbol"]] += 1
+        used.add(c["symbol"])
         out.append(c)
     return out
 
 
 POLICIES = {
-    "atual (3 setups, 1 por par)": dict(limit=3, per_symbol=1),
-    "6 setups, 1 por par": dict(limit=6, per_symbol=1),
-    "6 setups, até 2 por par": dict(limit=6, per_symbol=2),
-    "6 setups, até 2 por par + frequência": dict(limit=6, per_symbol=2, activity=True),
-    "10 setups, até 3 por par + frequência": dict(limit=10, per_symbol=3, activity=True),
-    "todas as livres (teto)": dict(limit=999, per_symbol=999, min_score=0.0),
+    "antes (3 setups, 1 por par)": lambda manager, cands: old_plan(cands),
+    "agora (plano do Gustavo sem IA)": lambda manager, cands: manager.deterministic_plan(cands),
+    "todas as livres (teto)": lambda manager, cands: [c for c in cands if not c["blocked"]],
 }
 
 
@@ -132,7 +127,6 @@ async def main() -> int:
     line("")
     line("== Sinais das estratégias aprovadas no período ==")
     signals: dict[int, list[tuple[int, int, float | None]]] = {}
-    tpm = {p["id"]: float((p["metrics"] or {}).get("trades_per_month") or 0) for p in approved}
     for p in approved:
         strat = get_strategy(p["strategy"])
         tf_sec = TIMEFRAME_SECONDS[p["timeframe"]]
@@ -159,7 +153,7 @@ async def main() -> int:
         line(
             f"   {p['symbol']:7s} {p['timeframe']:3s} {p['strategy_name'][:34]:34s} acerto {m.get('win_rate', 0):.0%} "
             f"{m.get('trades_per_month', 0):5.1f}/mês · pontuação {p['score']:.3f} · sinais: {len(out)}"
-            + (f" (soma {sum(known):+.2f}R em {len(known)} fechadas)" if known else "")
+            + (f" (soma {sum(known):+.2f}R em {len(known)} operações do teste)" if known else "")
         )
 
     # o que cada regra de plano estaria vigiando, hora a hora
@@ -184,10 +178,8 @@ async def main() -> int:
                 cands = manager.build_candidates()
             finally:
                 manager_mod.datetime = datetime
-            for c in cands:
-                c["tpm"] = tpm.get(c["profile_id"], 0.0)
-            for name, rules in POLICIES.items():
-                ids = {c["profile_id"] for c in policy(cands, **rules)}
+            for name, rule in POLICIES.items():
+                ids = {c["profile_id"] for c in rule(manager, cands)}
                 got = [s for pid, lst in signals.items() if pid in ids for s in lst if at.timestamp() <= s[0] < at.timestamp() + 3600]
                 hits[name] += got
                 per_day[name][day] += len(got)
@@ -199,7 +191,7 @@ async def main() -> int:
         wins = sum(1 for r in known if r > 0)
         by_day = " ".join(f"{d:%d/%m}:{per_day[name][d]}" for d in days)
         line(
-            f"   {name:40s} sinais {len(hits[name]):3d} · fechadas {len(known):3d} · acerto {wins / len(known) if known else 0:.0%} · "
+            f"   {name:40s} sinais {len(hits[name]):3d} · operações {len(known):3d} · acerto {wins / len(known) if known else 0:.0%} · "
             f"soma {sum(known):+.2f}R · por dia {by_day}"
         )
     return 0

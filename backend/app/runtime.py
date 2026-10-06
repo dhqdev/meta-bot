@@ -39,7 +39,7 @@ DEFAULT_FEEDS = [
 ]
 OFF_PAIR_FEEDS = {f.url for f in DEFAULT_FEEDS if not f.enabled}
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 
 def pair_symbols(suffix: str = "") -> list[str]:
@@ -98,7 +98,10 @@ class RuntimeConfig(BaseModel):
 
     # --- Gerente (Gustavo)
     decision_interval_minutes: int = Field(15, ge=1, le=240)
-    max_active_setups: int = Field(3, ge=1, le=10)
+    # Setups vigiados ao mesmo tempo. Vigiar mais não aumenta o risco: a Rita continua limitando as
+    # posições abertas, uma por ativo e a exposição por moeda; só aumenta a chance de pegar um sinal.
+    max_active_setups: int = Field(6, ge=1, le=10)
+    max_setups_per_symbol: int = Field(2, ge=1, le=5)  # mesmo par em tempos gráficos/estratégias diferentes
     min_hour_quality: float = Field(0.35, ge=0, le=1)
     use_news_filter: bool = True
     news_block_threshold: float = Field(0.55, ge=0.1, le=1)
@@ -263,6 +266,12 @@ def _migrate(stored: dict) -> dict:
         feeds = stored.get("news_feeds")
         if isinstance(feeds, list):
             stored["news_feeds"] = [dict(f, enabled=False) if isinstance(f, dict) and f.get("url") in OFF_PAIR_FEEDS else f for f in feeds]
+        stored["config_version"] = 3
+    if int(stored.get("config_version") or 1) < 4:
+        # v4: o plano vigiava só 3 setups (um por par) e quase sempre os mais lentos (H4): o dia passava
+        # sem nenhum sinal. Quem estava no padrão antigo (3) passa para o novo (6).
+        if stored.get("max_active_setups") in (None, 3):
+            stored["max_active_setups"] = 6
         stored["config_version"] = CONFIG_VERSION
     for old in ("max_daily_loss_pct", "ai_provider", "ai_model", "ai_news_model", "ai_auditor_model", "openrouter_manager_model",
                 "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model"):

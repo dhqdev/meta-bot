@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -35,6 +36,15 @@ from app.services.llm import to_json
 
 DEFAULT_WEIGHTS = {"strategy": 0.45, "hour": 0.2, "news": 0.15, "live": 0.2}
 DEFAULT_HORIZON_WEIGHTS = {"scalp": 1.0, "day": 1.0, "swing": 1.0}
+# dias úteis em 30 dias corridos (o backtest conta operações por mês corrido)
+TRADING_DAYS_PER_MONTH = 21.4
+
+
+def activity_factor(signals_per_day: float) -> float:
+    """Peso da frequência na ordem do plano: um setup que dá ~1 entrada por dia vale inteiro; um que
+    dá uma por semana perde até 25%. Sem isso o plano enchia de setups lentos (H4) e o dia passava
+    sem nenhum sinal, enquanto as aprovadas mais ativas ficavam de fora."""
+    return 0.75 + 0.25 * min(1.0, max(0.0, signals_per_day))
 
 
 class AIPick(BaseModel):
@@ -217,6 +227,7 @@ class ManagerAgent(Agent):
                 direction = "long" if ns["score"] > 0 else "short"
             m = prof["metrics"] or {}
             oos = prof["oos_metrics"] or {}
+            per_day = float(m.get("trades_per_month") or 0.0) / TRADING_DAYS_PER_MONTH
             cands.append(
                 {
                     "id": len(cands) + 1,
@@ -228,6 +239,8 @@ class ManagerAgent(Agent):
                     "horizon": horizon,
                     "avg_minutes": prof.get("avg_minutes"),
                     "score": round(total, 3),
+                    "signals_per_day": round(per_day, 2),
+                    "priority": round(total * activity_factor(per_day), 3),
                     "votes": {"strategy": round(strat_s, 3), "hour": round(hour_q, 3), "news": round(news_s, 3), "live": round(live_s, 3)},
                     "suggested_direction": direction,
                     "news": {"score": ns["score"], "confidence": ns["confidence"], "alerts": ns["alerts"][:2]},
@@ -241,7 +254,7 @@ class ManagerAgent(Agent):
                     "blocked": blocked,
                 }
             )
-        cands.sort(key=lambda c: c["score"], reverse=True)
+        cands.sort(key=lambda c: c["priority"], reverse=True)
         for i, c in enumerate(cands, 1):
             c["id"] = i
         return cands
@@ -249,13 +262,13 @@ class ManagerAgent(Agent):
     def deterministic_plan(self, cands: list[dict]) -> list[dict]:
         cfg = get_config()
         plan: list[dict] = []
-        used_symbols: set[str] = set()
+        per_symbol: Counter[str] = Counter()
         for c in cands:
             if len(plan) >= cfg.max_active_setups:
                 break
-            if c["blocked"] or c["symbol"] in used_symbols or c["score"] < 0.45:
+            if c["blocked"] or per_symbol[c["symbol"]] >= cfg.max_setups_per_symbol or c["score"] < 0.45:
                 continue
-            used_symbols.add(c["symbol"])
+            per_symbol[c["symbol"]] += 1
             plan.append(self._setup(c, c["suggested_direction"], 1.0, "maior pontuação da equipe"))
         return plan
 
@@ -292,7 +305,7 @@ class ManagerAgent(Agent):
         top = cands[:15]
         user = (
             f"Agora (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}. "
-            f"Limite de setups ativos: {cfg.max_active_setups}. Ordenação preferida pelo dono: {cfg.rank_by}.\n"
+            f"Limite de setups ativos: {cfg.max_active_setups} (no máximo {cfg.max_setups_per_symbol} por ativo). Ordenação preferida pelo dono: {cfg.rank_by}.\n"
             f"Sessões abertas: {', '.join(self.office.office_info.get('sessions') or []) or 'nenhuma'}.\n"
             f"Eventos de alto impacto nas próximas 6 h: {to_json(schedule.upcoming(6, ['High']))}\n"
             f"Risco: {to_json(risk)}\n"
@@ -313,12 +326,14 @@ class ManagerAgent(Agent):
             return None, res.error, res.model
         by_id = {c["id"]: c for c in top}
         plan: list[dict] = []
-        used: set[str] = set()
+        used: Counter[str] = Counter()
         for pick in res.data.picks:
             c = by_id.get(pick.candidate_id)
-            if c is None or c["blocked"] or c["symbol"] in used or len(plan) >= cfg.max_active_setups:
+            if c is None or c["blocked"] or used[c["symbol"]] >= cfg.max_setups_per_symbol or len(plan) >= cfg.max_active_setups:
                 continue
-            used.add(c["symbol"])
+            if any(p["profile_id"] == c["profile_id"] for p in plan):
+                continue
+            used[c["symbol"]] += 1
             plan.append(self._setup(c, pick.direction, pick.risk_mult, pick.reason))
         return plan, res.data.rationale[:800], res.model
 
