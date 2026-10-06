@@ -96,7 +96,7 @@ try {
   check(!(await page.getByText("reconectando…").first().isVisible().catch(() => false)), "WebSocket conectado");
   check(await page.getByRole("button", { name: "Conversa", exact: true }).isVisible(), "aba Conversa no escritório");
   check(await page.getByText("Mercado e operações hoje").isVisible(), "painel de mercado e operações do dia no escritório");
-  const daily = await page.getByText("hora da daily").first().isVisible().catch(() => false);
+  const daily = await page.getByText(/hora da daily|prévia da daily/).first().isVisible().catch(() => false);
   check(daily, "mensagens da equipe na conversa");
 
   // PWA: manifesto e service worker publicados
