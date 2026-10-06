@@ -58,3 +58,16 @@ def test_manager_learns_horizon_preference_slowly(office):
         manager.learn_horizons(summary)
     w = kv_get("manager.horizon_weights")
     assert w["scalp"] <= 1.25 and w["swing"] >= 0.75
+
+
+def test_horizon_preference_is_relative(office):
+    """Se todos os estilos vão bem no backtest, ninguém ganha peso à toa: a preferência é relativa."""
+    manager = office.agent("manager")
+    rows = [{"key": k, "label": k, "approved": 5, "bt_oos_expectancy_r": 0.1, "live_trades": 0, "live_r": 0.0} for k in ("scalp", "day", "swing")]
+    assert manager.learn_horizons({"horizons": rows}) == []
+    w = kv_get("manager.horizon_weights")
+    assert all(abs(v - 1.0) < 1e-9 for v in w.values())
+    before = dict(w)
+    rows[0]["bt_oos_expectancy_r"] = 0.25
+    notes = manager.learn_horizons({"horizons": rows}, save=False)
+    assert notes and kv_get("manager.horizon_weights") == before  # save=False só calcula

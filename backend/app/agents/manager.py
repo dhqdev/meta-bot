@@ -138,26 +138,36 @@ class ManagerAgent(Agent):
         stored = kv_get("manager.horizon_weights") or {}
         return {k: float(stored.get(k, v)) for k, v in DEFAULT_HORIZON_WEIGHTS.items()}
 
-    def learn_horizons(self, summary: dict) -> list[str]:
+    def learn_horizons(self, summary: dict, save: bool = True) -> list[str]:
         """Scalper x day trade x posição longa: ajusta a preferência com o backtest e o resultado real.
 
-        Peso entre 0,75 e 1,25, mudando no máximo 30% do caminho por dia (aprende devagar)."""
+        Peso entre 0,75 e 1,25, mudando no máximo 30% do caminho por dia (aprende devagar). A preferência é
+        relativa: os alvos são centrados em 1 (se todos vão bem, ninguém ganha peso à toa).
+        ``save=False`` só calcula (prévia da daily)."""
         old = self.horizon_weights()
-        new: dict[str, float] = {}
-        notes = []
+        targets: dict[str, float] = {}
+        labels: dict[str, str] = {}
         for row in summary.get("horizons", []):
             h = row["key"]
+            labels[h] = row.get("label", h)
             bt = max(-1.0, min(1.0, float(row.get("bt_oos_expectancy_r") or 0.0) * 4))
             n = int(row.get("live_trades") or 0)
             live = max(-1.0, min(1.0, float(row.get("live_r") or 0.0) / n * 2)) if n >= 3 else 0.0
             has_bt = bool(row.get("approved"))
-            target = 1.0 + 0.25 * ((0.6 * bt if has_bt else 0.0) + 0.4 * live)
+            targets[h] = 1.0 + 0.25 * ((0.6 * bt if has_bt else 0.0) + 0.4 * live)
+        if len(targets) > 1:
+            shift = sum(targets.values()) / len(targets) - 1.0
+            targets = {h: t - shift for h, t in targets.items()}
+        new: dict[str, float] = {}
+        notes = []
+        for h, target in targets.items():
             value = round(min(1.25, max(0.75, 0.7 * old.get(h, 1.0) + 0.3 * target)), 3)
             new[h] = value
             if abs(value - old.get(h, 1.0)) >= 0.01:
-                notes.append(f"{row.get('label', h)}: peso {old.get(h, 1.0):.2f} → {value:.2f}".replace(".", ","))
-        kv_set("manager.horizon_weights", new)
-        self.skills.update("leitura_contexto", params={"horizon_weights": new})
+                notes.append(f"{labels[h]}: peso {old.get(h, 1.0):.2f} → {value:.2f}".replace(".", ","))
+        if save:
+            kv_set("manager.horizon_weights", new)
+            self.skills.update("leitura_contexto", params={"horizon_weights": new})
         return notes
 
     def active_plan(self) -> list[dict]:

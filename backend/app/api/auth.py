@@ -25,6 +25,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _failures: dict[str, list[float]] = defaultdict(list)
 MAX_FAILURES = 6
+# por e-mail o limite é maior: impede força bruta espalhada sem deixar um estranho trancar o dono fora com 6 erros
+MAX_EMAIL_FAILURES = 20
 WINDOW = 600
 
 SETUP_CODE: dict[str, str | None] = {"code": None}
@@ -37,14 +39,19 @@ def setup_code() -> str:
 
 
 def _client_ip(request: Request) -> str:
-    fwd = request.headers.get("x-forwarded-for", "")
-    return (fwd.split(",")[0].strip() if fwd else "") or (request.client.host if request.client else "?")
+    """IP de quem chamou. Só confia no X-Forwarded-For escrito pelos nossos proxies (os últimos da lista):
+    o começo da lista vem do próprio cliente e pode ser inventado para fugir do limite de tentativas."""
+    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    trusted = max(1, get_settings().trusted_proxies)
+    if hops:
+        return hops[-trusted] if len(hops) >= trusted else hops[0]
+    return request.client.host if request.client else "?"
 
 
 def _check_rate(key: str) -> None:
     now = time.time()
     _failures[key] = [t for t in _failures[key] if now - t < WINDOW]
-    if len(_failures[key]) >= MAX_FAILURES:
+    if len(_failures[key]) >= (MAX_EMAIL_FAILURES if key.startswith("email:") else MAX_FAILURES):
         raise HTTPException(status_code=429, detail="Muitas tentativas. Aguarde alguns minutos.")
 
 

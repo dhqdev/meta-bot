@@ -46,6 +46,9 @@ def clean_db():
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
     reset_cache()
+    from app.api.system import forget_diagnostico
+
+    forget_diagnostico()
     # as contas dos testes antigos são em dólar; a conta em reais tem testes próprios (test_currency.py)
     update_config({"paper_currency": "USD"})
     yield

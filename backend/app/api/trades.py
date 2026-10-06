@@ -105,7 +105,7 @@ def summary(mode: str | None = None, days: int = Query(90, le=3650), user: User 
         "win_rate": round(wins / n, 4) if n else 0.0,
         "pnl": round(sum(t.pnl for t in closed), 2),
         "today_pnl": today_pnl,
-        "profit_factor": round(gross_win / gross_loss, 3) if gross_loss > 0 else (99.0 if gross_win > 0 else 0.0),
+        "profit_factor": round(gross_win / gross_loss, 3) if gross_loss > 0 else None,  # sem perdas: indefinido (a tela mostra "sem perdas")
         "avg_r": round(sum(t.pnl_r for t in closed) / n, 3) if n else 0.0,
         "by_strategy": [{"strategy": k, "name": REGISTRY[k].name if k in REGISTRY else k, **v} for k, v in sorted(by_strategy.items(), key=lambda kv: -kv[1]["pnl"])],
         "by_symbol": [{"symbol": k, **v} for k, v in sorted(by_symbol.items(), key=lambda kv: -kv[1]["pnl"])],

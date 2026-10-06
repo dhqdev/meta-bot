@@ -113,6 +113,25 @@ def test_live_mode_requires_password_and_mt5(client):
     assert client.post("/api/system/mode", json={"mode": "paper"}).json()["mode"] == "paper"
 
 
+
+def test_back_to_paper_restores_the_price_source(client):
+    """Usar o MT5 grava a origem "mt5"; voltar ao simulado devolve a de antes (senão, sem MT5, o simulado fica sem preço)."""
+    from app.main import app
+    from app.runtime import get_config
+
+    setup_owner(client)
+    client.put("/api/settings", json={"data_source": "real"})
+    market = app.state.office.market
+    market.mt5_ok = True
+    try:
+        r = client.post("/api/system/mode", json={"mode": "live", "password": PASSWORD, "confirm": True})
+        assert r.status_code == 200 and get_config().data_source == "mt5"
+        r = client.post("/api/system/mode", json={"mode": "paper"})
+        assert r.json() == {"mode": "paper", "data_source": "real"} and get_config().data_source == "real"
+    finally:
+        market.mt5_ok = False
+
+
 def test_manual_backtest_endpoint(client):
     setup_owner(client)
     r = client.post("/api/strategies/backtest", json={"symbol": "EURUSD", "timeframe": "H4", "strategies": ["supertrend", "ifr_reversao"]})
@@ -224,3 +243,14 @@ def test_news_only_about_the_pairs(office):
     agent = office.agent("news")
     assert agent._symbols_from_assets({"BTC": 0.8}) == {}
     assert set(agent._symbols_from_assets({"EUR": 0.5})) == {"EURUSD", "EURJPY", "EURGBP"}
+
+
+def test_login_limit_ignores_forged_forwarded_for(client):
+    """Inventar IPs no começo do X-Forwarded-For não escapa do limite de tentativas."""
+    setup_owner(client)
+    statuses = []
+    for i in range(8):
+        headers = {"X-Forwarded-For": f"9.9.9.{i}, 203.0.113.77, 10.0.0.2"}
+        r = client.post("/api/auth/login", json={"email": f"outro{i}@example.com", "password": "errada123456"}, headers=headers)
+        statuses.append(r.status_code)
+    assert statuses[:6] == [401] * 6 and statuses[6:] == [429, 429]

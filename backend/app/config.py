@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     timezone: str = "America/Sao_Paulo"
     # Origens extras aceitas em requisições que alteram dados (CSRF), separadas por vírgula.
     allowed_origins: str = ""
+    # Quantos proxies de confiança ficam na frente do backend (Traefik + nginx = 2). O IP do cliente é lido
+    # nessa posição do X-Forwarded-For, contando da direita: o que vem antes pode ter sido inventado por quem chamou.
+    trusted_proxies: int = 2
 
     @property
     def is_production(self) -> bool:

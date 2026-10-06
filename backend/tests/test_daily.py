@@ -30,7 +30,7 @@ def seed_losses(profile_id: int, n: int = 2, r: float = -1.0) -> None:
 
 def test_daily_without_ai_writes_report_and_adjusts_tomorrow(office):
     async def run():
-        update_config({"system_running": True, "watchlist": [SYMBOL]})
+        update_config({"system_running": True, "watchlist": [SYMBOL], "daily_meeting_time": "00:00"})
         office.ensure_setup()
         pid = make_profile()
         seed_losses(pid, n=2, r=-1.0)
@@ -91,7 +91,7 @@ def test_daily_with_ai_uses_the_fixed_daily_model(office):
         return httpx.Response(200, json={"model": body["model"], "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}], "usage": {"prompt_tokens": 3000, "completion_tokens": 600, "cost": 0.006}})
 
     async def run():
-        update_config({"system_running": True, "watchlist": [SYMBOL]})
+        update_config({"system_running": True, "watchlist": [SYMBOL], "daily_meeting_time": "00:00"})
         secret_set("openrouter_api_key", "sk-or-test")
         office.llm = LLMService(transport=httpx.MockTransport(handler))
         office.ensure_setup()
@@ -144,3 +144,49 @@ def test_daily_api(client_owner):
     full = client.get(f"/api/daily/{day}").json()
     assert full["transcript"] and "sections" in full
     assert client.get("/api/daily/1999-01-01").status_code == 404
+
+
+def test_button_before_meeting_time_is_a_preview(office):
+    """Antes das 19h o botão faz uma prévia: não aplica ajustes e não tira a daily automática do dia."""
+    async def run():
+        update_config({"system_running": True, "watchlist": [SYMBOL], "daily_meeting_time": "23:59"})
+        if office.daily.meeting_passed():  # roda exatamente às 23:59: nada a provar
+            return
+        office.ensure_setup()
+        pid = make_profile()
+        seed_losses(pid, n=2, r=-1.0)
+        weights = kv_get("manager.horizon_weights")
+        report = await office.daily.run(force=True)
+        assert report["metrics"]["preview"] is True and report["summary"].startswith("Prévia")
+        assert report["adjustments"]  # mostra o que seria ajustado...
+        with session_scope() as s:
+            assert s.get(StrategyProfile, pid).status == "aprovada"  # ...sem mexer em nada
+            assert not list(s.scalars(select(Lesson).where(Lesson.source == "daily")))
+            assert not s.scalar(select(Skill.xp).where(Skill.agent == "manager", Skill.key == "aprendizado_daily"))
+        assert kv_get("team.avoid_hours") in (None, {})
+        assert kv_get("manager.horizon_weights") == weights
+        assert kv_get("daily.last") is None
+        assert office.daily.next_at().startswith(office.daily.local_now().date().isoformat())  # a das 23:59 continua hoje
+
+    asyncio.run(run())
+
+
+def test_repeating_the_daily_does_not_apply_twice(office):
+    async def run():
+        update_config({"system_running": True, "watchlist": [SYMBOL], "daily_meeting_time": "00:00"})
+        office.ensure_setup()
+        seed_losses(make_profile(), n=2, r=-1.0)
+        first = await office.daily.run(force=True)
+        weights = kv_get("manager.horizon_weights")
+        with session_scope() as s:
+            xp = s.scalar(select(Skill.xp).where(Skill.agent == "manager", Skill.key == "aprendizado_daily"))
+            n_lessons = len(list(s.scalars(select(Lesson).where(Lesson.source == "daily"))))
+        for _ in range(3):
+            again = await office.daily.run(force=True)
+        assert kv_get("manager.horizon_weights") == weights
+        assert again["adjustments"] == first["adjustments"]
+        with session_scope() as s:
+            assert s.scalar(select(Skill.xp).where(Skill.agent == "manager", Skill.key == "aprendizado_daily")) == xp
+            assert len(list(s.scalars(select(Lesson).where(Lesson.source == "daily")))) == n_lessons
+
+    asyncio.run(run())

@@ -76,6 +76,25 @@ def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value:.0%}"
 
 
+def _money(value: float, currency: str) -> str:
+    """Valor com o símbolo da moeda, no jeito brasileiro: "R$ 1.234,56"."""
+    symbol = {"BRL": "R$", "USD": "US$"}.get(currency, currency)
+    text = f"{abs(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{'−' if value < 0 else ''}{symbol} {text}".strip()
+
+
+def _clip(text: str, limit: int) -> str:
+    """Corta no fim de uma palavra e marca com reticências (nada de frase cortada no meio)."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:—-")
+    return cut + "…"
+
+
+# chave do kv com o dia em que os ajustes da daily já foram aplicados (uma vez por dia)
+APPLIED_KEY = "daily.applied"
+
+
 class DailyMeeting:
     def __init__(self, office: "Office"):
         self.office = office
@@ -114,6 +133,12 @@ class DailyMeeting:
         if kv_get("daily.last") == now.date().isoformat() or at <= now:
             at += timedelta(days=1)
         return at.isoformat()
+
+    def meeting_passed(self) -> bool:
+        """Já passou do horário da daily hoje? Antes disso, a daily feita pelo botão é só uma prévia."""
+        hh, mm = (int(x) for x in get_config().daily_meeting_time.split(":"))
+        now = self.local_now()
+        return (now.hour, now.minute) >= (hh, mm)
 
     def _day_start(self) -> datetime:
         return self.local_now().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
@@ -207,8 +232,10 @@ class DailyMeeting:
         }
 
     # ------------------------------------------------------------ análise
-    def analyze(self, data: dict) -> tuple[list[dict], list[dict], list[dict]]:
-        """Cada agente olha a sua área. Devolve (seções, ajustes, lições por regra)."""
+    def analyze(self, data: dict, apply: bool = True) -> tuple[list[dict], list[dict], list[dict]]:
+        """Cada agente olha a sua área. Devolve (seções, ajustes, lições por regra).
+
+        ``apply=False`` (prévia ou daily repetida no mesmo dia): descreve os ajustes sem mexer em nada."""
         cfg = get_config()
         tz = self.tz()
         cur = data["currency"]
@@ -225,7 +252,7 @@ class DailyMeeting:
         # Gustavo: visão geral + horizontes
         risk = data["risk"]
         stop = risk.get("day_stop")
-        head = f"{tot['n']} operações, {tot['wins']} vencedoras ({_pct(tot['win_rate'])}), resultado {_br(tot['pnl'])} {cur} ({_br(tot['r'])}R)." if tot["n"] else "Dia sem operações: nenhum setup passou nos filtros ou o mercado não deu sinal."
+        head = f"{tot['n']} operações, {tot['wins']} vencedoras ({_pct(tot['win_rate'])}), resultado {'+' if tot['pnl'] >= 0 else ''}{_money(tot['pnl'], cur)} ({_br(tot['r'])}R)." if tot["n"] else "Dia sem operações: nenhum setup passou nos filtros ou o mercado não deu sinal."
         manager_bullets = [head]
         if stop == "target":
             manager_bullets.append("Batemos a meta do dia e encerramos cedo.")
@@ -244,7 +271,7 @@ class DailyMeeting:
             manager_bullets.append(
                 f"Saídas da revisão conferidas: {rl.get('good', 0)} acerto(s), {rl.get('early', 0)} cedo demais em {rl['checked']}; paciência em {rl.get('patience', 0.0):+.2f}.".replace(".", ",", 1)
             )
-        horizon_notes = self.office.agent("manager").learn_horizons(data["horizons"])
+        horizon_notes = self.office.agent("manager").learn_horizons(data["horizons"], save=apply)
         for note in horizon_notes:
             adjustments.append({"agent": "manager", "kind": "horizonte", "text": f"Preferência de horizonte ajustada — {note}"})
         best_h = max((h for h in data["horizons"]["horizons"] if h["approved"]), key=lambda h: h["bt_oos_expectancy_r"], default=None)
@@ -295,7 +322,8 @@ class DailyMeeting:
                 entry["until"] = tomorrow_end
                 local_h = datetime.now(timezone.utc).replace(hour=hour, minute=0).astimezone(tz).hour
                 adjustments.append({"agent": "schedule", "kind": "horario", "text": f"Evitar entradas às {local_h}h amanhã em todos os ativos ({len(rs)} perdas hoje).", "data": {"symbol": "*", "hour_utc": hour}})
-        kv_set("team.avoid_hours", avoid)
+        if apply:
+            kv_set("team.avoid_hours", avoid)
         by_hour = data["by_hour_local"]
         if by_hour:
             best = by_hour[0]
@@ -315,9 +343,10 @@ class DailyMeeting:
                 if len(rows) >= 2 and r_sum <= -1.5:
                     prof = s.get(StrategyProfile, pid)
                     if prof is not None and prof.status == "aprovada":
-                        prof.status = "observacao"
-                        # fica fora do plano amanhã; depois disso a Estela revalida com o histórico mais recente
-                        prof.live = {**(prof.live or {}), "revalidate_after": tomorrow_end, "flagged_by": "daily"}
+                        if apply:
+                            prof.status = "observacao"
+                            # fica fora do plano amanhã; depois disso a Estela revalida com o histórico mais recente
+                            prof.live = {**(prof.live or {}), "revalidate_after": tomorrow_end, "flagged_by": "daily"}
                         name = REGISTRY[prof.strategy].name if prof.strategy in REGISTRY else prof.strategy
                         adjustments.append({"agent": "strategist", "kind": "estrategia", "text": f"{name} em {prof.symbol} {prof.timeframe} fica fora do plano amanhã e só volta se passar na revalidação ({len(rows)} operações, {_br(r_sum)}R hoje).", "data": {"profile_id": pid}})
                         lessons.append({"agent": "strategist", "text": f"{name} em {prof.symbol} {prof.timeframe} perdeu {len(rows)} vezes no mesmo dia ({_br(r_sum)}R): revalidar antes de voltar ao plano."})
@@ -338,22 +367,24 @@ class DailyMeeting:
         # Rita: metas e risco (nunca aumenta o risco)
         rita = []
         if risk.get("daily_loss_money"):
-            rita.append(f"Limite de perda do dia: {risk['daily_loss_money']:.2f} {cur}; resultado {_br(risk.get('day_pnl') or 0)} {cur}.".replace(".", ",", 1))
+            pnl_day = float(risk.get("day_pnl") or 0)
+            rita.append(f"Limite de perda do dia: {_money(risk['daily_loss_money'], cur)}; resultado {'+' if pnl_day >= 0 else ''}{_money(pnl_day, cur)}.")
         if risk.get("daily_target_money"):
-            rita.append(f"Meta de ganho do dia: {risk['daily_target_money']:.2f} {cur}.".replace(".", ",", 1))
+            rita.append(f"Meta de ganho do dia: {_money(risk['daily_target_money'], cur)}.")
         st = self.office.agent("risk").state_kv()
         mult = float(st.get("adaptive_mult", 1.0))
         if stop == "loss":
             new_mult = round(min(mult, 0.75), 4)
-            if new_mult < mult:
+            if new_mult < mult and apply:
                 st["adaptive_mult"] = new_mult
                 self.office.agent("risk").save_state(st)
             adjustments.append({"agent": "risk", "kind": "risco", "text": f"Rita começa amanhã com {new_mult:.0%} do risco normal (dia fechou no limite de perda)."})
             lessons.append({"agent": "risk", "text": "Dia no limite de perda: começar o dia seguinte com risco reduzido e só voltar ao normal depois de ganhos."})
         elif tot["pnl"] > 0 and mult < 1.0:
             new_mult = round(min(1.0, mult + 0.1), 4)
-            st["adaptive_mult"] = new_mult
-            self.office.agent("risk").save_state(st)
+            if apply:
+                st["adaptive_mult"] = new_mult
+                self.office.agent("risk").save_state(st)
             adjustments.append({"agent": "risk", "kind": "risco", "text": f"Dia positivo: risco volta aos poucos, de {mult:.0%} para {new_mult:.0%} do normal."})
         rita.append(f"Risco adaptativo em {float(self.office.agent('risk').state_kv().get('adaptive_mult', 1.0)):.0%} do normal.")
         if risk.get("kill_switch"):
@@ -367,7 +398,8 @@ class DailyMeeting:
             caio.append("Saídas: " + ", ".join(f"{k} {v}" for k, v in sorted(exits.items(), key=lambda kv: -kv[1])) + ".")
             if tot["n"] >= 3 and exits.get("tempo", 0) / tot["n"] >= 0.4:
                 adjustments.append({"agent": "cashier", "kind": "saida", "text": "Muitas saídas por tempo: Caio revisa a gestão de saída esta noite com as operações reais."})
-                self.office.agent("cashier").request("exits_review")
+                if apply:
+                    self.office.agent("cashier").request("exits_review")
         caio.append(f"{tot['open']} posição(ões) ainda aberta(s)." if tot["open"] else "Nenhuma posição aberta.")
         section("cashier", caio)
 
@@ -387,19 +419,20 @@ class DailyMeeting:
         return sections, adjustments, lessons
 
     # --------------------------------------------------------- reunião
-    def deterministic(self, data: dict, sections: list[dict], adjustments: list[dict]) -> AIDaily:
+    def deterministic(self, data: dict, sections: list[dict], adjustments: list[dict], preview: bool = False) -> AIDaily:
         tot = data["totals"]
         cur = data["currency"]
         by_agent = {s["agent"]: s["bullets"] for s in sections}
-        lines = [AIDailyLine(agent="manager", text=f"Daily das {get_config().daily_meeting_time}, time! " + (by_agent["manager"][0] if by_agent.get("manager") else ""))]
+        opening = "Prévia da daily, time! " if preview else f"Daily das {get_config().daily_meeting_time}, time! "
+        lines = [AIDailyLine(agent="manager", text=opening + (by_agent["manager"][0] if by_agent.get("manager") else ""))]
         for agent in ORDER[1:]:
             bullets = by_agent.get(agent) or []
             if bullets:
-                lines.append(AIDailyLine(agent=agent, text=bullets[0][:200]))
-        focus = [a["text"][:120] for a in adjustments[:3]] or ["Manter a disciplina: stop sempre no lugar e só setups aprovados."]
-        lines.append(AIDailyLine(agent="manager", text=("Foco de amanhã: " + "; ".join(focus))[:200]))
+                lines.append(AIDailyLine(agent=agent, text=_clip(bullets[0], 220)))
+        focus = [_clip(a["text"], 140) for a in adjustments[:3]] or ["Manter a disciplina: stop sempre no lugar e só setups aprovados."]
+        lines.append(AIDailyLine(agent="manager", text=_clip(("Até a daily oficial, foco em: " if preview else "Foco de amanhã: ") + "; ".join(focus), 420)))
         if tot["n"]:
-            summary = f"Dia com {tot['n']} operações ({tot['wins']} vencedoras), resultado {_br(tot['pnl'])} {cur} ({_br(tot['r'])}R)."
+            summary = f"Dia com {tot['n']} operações ({tot['wins']} vencedoras), resultado {'+' if tot['pnl'] >= 0 else ''}{_money(tot['pnl'], cur)} ({_br(tot['r'])}R)."
         else:
             summary = "Dia sem operações: a equipe ficou de fora (nenhum setup passou nos filtros ou o mercado não deu sinal)."
         stop = data["risk"].get("day_stop")
@@ -407,6 +440,8 @@ class DailyMeeting:
             summary += " A meta do dia foi batida e a equipe encerrou cedo."
         elif stop == "loss":
             summary += " O dia fechou no limite de perda."
+        if preview:
+            summary = f"Prévia (a daily oficial é às {get_config().daily_meeting_time}): " + summary
         mood = "bom" if tot["pnl"] > 0 else "ruim" if tot["pnl"] < 0 else "neutro"
         return AIDaily(summary=summary, mood=mood, transcript=lines, lessons=[], focus=focus)
 
@@ -451,26 +486,42 @@ class DailyMeeting:
     async def _run(self, force: bool) -> dict:
         manager = self.office.agent("manager")
         day = self.local_now().date().isoformat()
-        kv_set("daily.last", day)
-        manager.tell("all", "📣 Time, hora da daily! Todo mundo na sala de reunião.", kind="daily")
-        record_activity("manager", "Daily começando: a equipe vai para a sala de reunião", kind="daily")
+        # Daily oficial: a automática, ou a do botão depois do horário. Antes do horário o botão faz uma prévia:
+        # mostra como está o dia sem mexer em nada e sem tirar a daily das 19h.
+        official = not force or self.meeting_passed()
+        # os ajustes (horários, estratégias, risco, preferência de horizonte) valem uma vez por dia
+        apply = official and kv_get(APPLIED_KEY) != day
+        if official:
+            kv_set("daily.last", day)
+        manager.tell("all", "📣 Time, hora da daily! Todo mundo na sala de reunião." if official else "📣 Time, prévia da daily: como está o nosso dia até agora?", kind="daily")
+        record_activity("manager", "Daily começando: a equipe vai para a sala de reunião" if official else "Prévia da daily (a oficial continua no horário)", kind="daily")
         data = self.collect()
-        sections, adjustments, rule_lessons = self.analyze(data)
-        base = self.deterministic(data, sections, adjustments)
-        ai_data, model, ai_error = await self.with_ai(data, sections, adjustments)
+        sections, adjustments, rule_lessons = self.analyze(data, apply=apply)
+        if official and not apply:
+            # daily repetida no mesmo dia: os ajustes já valeram; mostra os que foram decididos, sem aplicar de novo
+            previous = self.report_for(day)
+            if previous and not (previous.get("metrics") or {}).get("preview"):
+                adjustments = previous.get("adjustments") or adjustments
+        if not apply:
+            rule_lessons = []
+        if apply:
+            kv_set(APPLIED_KEY, day)
+        base = self.deterministic(data, sections, adjustments, preview=not official)
+        # a prévia não gasta IA: as falas pela IA ficam para a daily oficial
+        ai_data, model, ai_error = await self.with_ai(data, sections, adjustments) if official else (None, "", "")
         result = base
         if ai_data is not None:
             transcript = [line for line in ai_data.transcript if line.agent in PERSONAS and line.text.strip()][:14]
             result = AIDaily(
                 summary=ai_data.summary.strip()[:1200] or base.summary,
                 mood=ai_data.mood if ai_data.mood in ("bom", "neutro", "ruim") else base.mood,
-                transcript=[AIDailyLine(agent=x.agent, text=x.text.strip()[:220]) for x in transcript] or base.transcript,
+                transcript=[AIDailyLine(agent=x.agent, text=_clip(x.text.strip(), 420)) for x in transcript] or base.transcript,
                 lessons=[x for x in ai_data.lessons if x.agent in VALID_LESSON_TARGETS and x.text.strip()][:4],
-                focus=[f.strip()[:140] for f in ai_data.focus if f.strip()][:3] or base.focus,
+                focus=[_clip(f.strip(), 160) for f in ai_data.focus if f.strip()][:3] or base.focus,
             )
         elif ai_error:
             log.info("daily sem IA: %s", ai_error)
-        lessons = rule_lessons + [{"agent": x.agent, "text": x.text.strip()} for x in result.lessons]
+        lessons = rule_lessons + ([{"agent": x.agent, "text": x.text.strip()} for x in result.lessons] if apply else [])
         for lesson in lessons:
             add_lesson(lesson["agent"], lesson["text"], {"day": day}, source="daily")
         status = {"target": "meta", "loss": "limite"}.get(data["risk"].get("day_stop") or "", "normal")
@@ -480,7 +531,7 @@ class DailyMeeting:
             "transcript": [x.model_dump() for x in result.transcript], "sections": sections, "adjustments": adjustments,
             "lessons": lessons, "focus": result.focus,
             "metrics": {k: data[k] for k in ("totals", "by_strategy", "by_symbol", "by_horizon", "by_hour_local", "exits", "signals", "risk", "news", "infra", "ai_cost_usd", "xp", "currency", "events", "reviews")}
-            | {"horizons": data["horizons"]["horizons"]},
+            | {"horizons": data["horizons"]["horizons"], "preview": not official},
             "ai": ai_data is not None, "model": model if ai_data is not None else "",
         }
         with session_scope() as s:
@@ -495,22 +546,33 @@ class DailyMeeting:
             s.flush()
             report["id"] = row.id
         # skills: cada um aprende com a daily (mais XP quando teve ajuste na sua área)
-        touched = Counter(a["agent"] for a in adjustments)
-        for agent_id, agent in self.office.agents.items():
-            xp = 5 + (5 if data["totals"]["pnl"] > 0 else 0) + 3 * touched.get(agent_id, 0)
-            agent.skills.gain(DAILY_SKILL.key, xp, f"daily de {day}")
+        if apply:  # XP só uma vez por dia (repetir a daily não sobe nível)
+            touched = Counter(a["agent"] for a in adjustments)
+            for agent_id, agent in self.office.agents.items():
+                xp = 5 + (5 if data["totals"]["pnl"] > 0 else 0) + 3 * touched.get(agent_id, 0)
+                agent.skills.gain(DAILY_SKILL.key, xp, f"daily de {day}")
         # reunião no escritório (todos na sala) e aviso para as telas
         participants = [a for a in ORDER if a != "manager"]
         self.office.meeting(host="manager", participants=participants, lines=report["transcript"], title="Daily")
         bus.publish({"type": "daily", "day": day, "id": report["id"], "summary": report["summary"], "pnl": report["pnl"], "mood": report["mood"]})
         record_activity("manager", f"📋 Daily de {day}: {report['summary']}", kind="daily", data={"day": day, "adjustments": len(adjustments)})
-        manager.tell("all", "✅ Daily concluída. Relatório na aba Daily; amanhã a gente aplica o que aprendeu.", kind="daily")
-        # o próximo plano já considera as lições e os ajustes (não reaproveita o plano antigo da IA)
-        manager._ai_cache = None
-        manager.request("decide")
+        if official:
+            manager.tell("all", "✅ Daily concluída. Relatório na aba Daily; amanhã a gente aplica o que aprendeu.", kind="daily")
+        else:
+            manager.tell("all", f"✅ Prévia feita. A daily oficial continua às {get_config().daily_meeting_time}.", kind="daily")
+        if apply:
+            # o próximo plano já considera as lições e os ajustes (não reaproveita o plano antigo da IA)
+            manager._ai_cache = None
+            manager.request("decide")
         return report
 
     # ------------------------------------------------------------ consulta
+    @staticmethod
+    def report_for(day: str) -> dict | None:
+        with session_scope() as s:
+            row = s.scalar(select(DailyReport).where(DailyReport.day == day))
+            return report_dict(row) if row else None
+
     @staticmethod
     def last_report(before: str | None = None) -> dict | None:
         with session_scope() as s:

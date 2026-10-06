@@ -57,7 +57,7 @@ def test_daily_lessons_apply_on_the_next_day(office, monkeypatch):
         return httpx.Response(200, json={"model": body["model"], "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(answer)}}], "usage": {"prompt_tokens": 100, "completion_tokens": 20, "cost": 0.001}})
 
     async def run():
-        update_config({"system_running": True, "watchlist": [SYMBOL], "timeframes": ["H1"], "daily_loss_limit": 0.5})
+        update_config({"system_running": True, "watchlist": [SYMBOL], "timeframes": ["H1"], "daily_loss_limit": 0.5, "daily_meeting_time": "00:00"})
         risk = office.agent("risk")
         strategist = office.agent("strategist")
         manager = office.agent("manager")

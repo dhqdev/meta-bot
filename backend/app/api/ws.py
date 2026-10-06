@@ -24,6 +24,14 @@ def _origin_ok(websocket: WebSocket) -> bool:
     return urlparse(origin).netloc == host.split(",")[0].strip()
 
 
+def _session_alive(websocket: WebSocket) -> bool:
+    db = SessionLocal()
+    try:
+        return user_from_token(db, websocket.cookies.get(COOKIE_NAME)) is not None
+    finally:
+        db.close()
+
+
 @router.websocket("/ws")
 async def office_ws(websocket: WebSocket) -> None:
     if not _origin_ok(websocket):
@@ -58,6 +66,10 @@ async def office_ws(websocket: WebSocket) -> None:
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=25)
             except asyncio.TimeoutError:
+                # sessão encerrada (sair, troca de senha em outro aparelho, expirou): para de transmitir
+                if not _session_alive(websocket):
+                    await websocket.close(code=4401)
+                    return
                 await websocket.send_json({"type": "ping"})
                 continue
             await websocket.send_json(event)

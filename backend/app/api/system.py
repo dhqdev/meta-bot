@@ -17,11 +17,13 @@ from app.config import get_settings
 from app.core.market_hours import fx_status
 from app.deps import current_user, get_office
 from app.events import bus, record_activity
-from app.kv import kv_set
+from app.kv import kv_get, kv_set
 from app.models import User
 from app.runtime import get_config, update_config
 
 router = APIRouter(prefix="/api", tags=["system"])
+
+PREVIOUS_SOURCE_KEY = "mode.previous_data_source"
 
 
 @router.get("/health")
@@ -71,9 +73,28 @@ async def _symbol_open(office, symbol: str) -> bool | None:
         return None
 
 
+_DIAG_CACHE: dict = {"at": 0.0, "data": None}
+DIAG_TTL = 20.0  # o painel pede a cada minuto; várias telas abertas não refazem tudo (cotação de 10 pares)
+
+
+def forget_diagnostico() -> None:
+    """Algo mudou na mão (ligar/desligar, modo): o painel recalcula na próxima chamada."""
+    _DIAG_CACHE.update(at=0.0, data=None)
+
+
 @router.get("/system/diagnostico")
 async def diagnostico(user: User = Depends(current_user), office=Depends(get_office)) -> dict:
     """Por que a equipe está (ou não) operando hoje: mercado, plano, sinais e vetos, em português simples."""
+    import time
+
+    if _DIAG_CACHE["data"] is not None and time.monotonic() - _DIAG_CACHE["at"] < DIAG_TTL:
+        return _DIAG_CACHE["data"]
+    data = await _diagnostico(office)
+    _DIAG_CACHE.update(at=time.monotonic(), data=data)
+    return data
+
+
+async def _diagnostico(office) -> dict:
     from sqlalchemy import select
 
     from app.db import session_scope
@@ -186,6 +207,7 @@ async def set_running(body: RunBody, user: User = Depends(current_user), office=
         reopen = next_open(cfg.watchlist) if all_closed(cfg.watchlist) else None
         kv_set(WEEKEND_SKIP_KEY, reopen.isoformat() if reopen else None)
     update_config({"system_running": body.running})
+    forget_diagnostico()
     bus.publish({"type": "system", "running": body.running})
     record_activity("system", "Sistema ligado: a equipe chegou ao escritório" if body.running else "Sistema desligado: sem novas entradas (as posições abertas continuam protegidas)", kind="system")
     for agent in office.agents.values():
@@ -207,10 +229,25 @@ async def set_mode(body: ModeBody, user: User = Depends(current_user), office=De
             raise HTTPException(status_code=400, detail="Confirme que entende que ordens reais serão enviadas à corretora.")
         if not office.market.mt5_ok:
             raise HTTPException(status_code=409, detail="O MetaTrader 5 não está conectado. Conecte a corretora antes de usar a conta real.")
-    update_config({"mode": body.mode, **({"data_source": "mt5"} if body.mode == "live" else {})})
+    cfg = get_config()
+    if body.mode == "live":
+        # guarda a origem dos preços de antes para restaurar ao voltar ao simulado
+        if cfg.mode != "live":
+            kv_set(PREVIOUS_SOURCE_KEY, cfg.data_source)
+        changes = {"mode": "live", "data_source": "mt5"}
+    else:
+        # o simulado não pode ficar preso ao MT5: se ele cair, a conta simulada ficaria sem preços
+        previous = kv_get(PREVIOUS_SOURCE_KEY)
+        restore = previous if previous in ("auto", "real", "synthetic", "mt5") and cfg.mode == "live" else None
+        if restore is None and cfg.data_source == "mt5" and cfg.mode == "live":
+            restore = "auto"
+        changes = {"mode": "paper", **({"data_source": restore} if restore else {})}
+        kv_set(PREVIOUS_SOURCE_KEY, None)
+    update_config(changes)
+    forget_diagnostico()
     office.market.clear_cache()
     record_activity("system", "Modo CONTA DA CORRETORA (MT5): as ordens vão para a corretora" if body.mode == "live" else "Modo simulado: nenhuma ordem vai para a corretora", kind="system", level="warning" if body.mode == "live" else "info")
-    return {"mode": body.mode}
+    return {"mode": body.mode, "data_source": get_config().data_source}
 
 
 class ConfirmBody(BaseModel):
