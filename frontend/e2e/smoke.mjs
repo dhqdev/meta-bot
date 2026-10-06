@@ -68,7 +68,8 @@ try {
   check(await page.getByText("Modelo de cada agente").isVisible(), "configurações de IA (OpenRouter, modelos fixos) visíveis");
   check(await page.getByText("Limite de perda do dia").first().isVisible(), "metas do dia nas configurações");
   check((await page.locator('input[placeholder^="sk-ant"]').count()) === 0, "sem opção de chave da Anthropic");
-  check(await page.getByText("Os 10 pares da equipe").isVisible(), "os 10 pares fixos nas configurações");
+  check(await page.getByText("Ativos da equipe").isVisible(), "conjunto de ativos nas configurações");
+  check(await page.getByText("Carteira diária: índices e ouro (recomendado)").isVisible(), "carteira diária como opção nas configurações");
 
   // Perfil rápido salva sozinho, mesmo saindo da tela logo depois (sem tocar em Salvar)
   await page.getByText("Conservador", { exact: true }).click();

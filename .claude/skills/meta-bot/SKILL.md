@@ -26,7 +26,7 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 
 ## Fluxo de uma operação
 
-1. Gustavo monta o plano a cada `decision_interval_minutes` (`manager.build_candidates` → `deterministic_plan` ou `ai_plan`). Candidatos bloqueados: evento (Hugo), hora fraca (`min_hour_quality`), hora evitada pela daily (`team.avoid_hours`, por ativo ou `"*"`).
+1. Gustavo monta o plano a cada `decision_interval_minutes` (`manager.build_candidates` → `deterministic_plan` ou `ai_plan`). Candidatos bloqueados: evento (Hugo), hora fraca (`min_hour_quality`), hora evitada pela daily (`team.avoid_hours`, por ativo ou `"*"`). Setup D1 não é bloqueado por hora. Na carteira diária (`market_set="carteira_diaria"`, o padrão) o plano é sempre por regra e vigia todos os setups livres; quem limita a exposição é a Rita (uma posição por ativo, `max_open_positions`).
 2. Estela vê o sinal num setup do plano → `office.submit_signal` (pipeline com lock).
 3. `manager.review_signal` (plano, direção, evento, notícias fortes) → `risk.evaluate` (meta do dia, trava, posições, exposição, spread, lote) → `cashier` executa.
 4. Cada passo vira **mensagem da equipe** (`agent.tell(to, text, kind)`): pedido → resposta, visível na aba Conversa e como envelope voando no escritório.
