@@ -60,6 +60,7 @@ def test_client_account_quotes_and_candles():
                 t, o, h, low, c = rates["rows"][-1][:5]
                 assert low <= o <= h and low <= c <= h and o == pytest.approx(low + 0.00003)
                 assert [r[0] for r in rates["rows"]] == sorted(r[0] for r in rates["rows"])
+                assert all(r[6] == 12 for r in rates["rows"])  # spread de agora em pontos (custo no backtest)
                 with pytest.raises(Exception):
                     await client.symbol("NAOEXISTE")
             finally:

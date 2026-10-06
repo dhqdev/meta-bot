@@ -484,6 +484,13 @@ class CTraderClient:
             raise MT5Error(f"timeframe inválido: {timeframe}", 400)
         symbol_id = self._light(symbol).symbolId
         digits = int((await self._detail(symbol_id)).digits)
+        # a cTrader não manda o spread de cada candle (são candles do bid): usa o spread de agora, como nos preços públicos,
+        # para o backtest não ficar sem esse custo
+        try:
+            spot = await self._spot(symbol_id)
+            spread = max(0, round((spot["ask"] - spot["bid"]) * 10 ** digits))
+        except MT5Error:
+            spread = 0
         step_ms = PERIOD_SECONDS[tf] * 1000
         window = max(step_ms * 10, min(step_ms * count * 2, 400 * 86400 * 1000))
         to_ts = int(time.time() * 1000)
@@ -513,7 +520,7 @@ class CTraderClient:
                     round((low + tb.deltaHigh) / 100000, digits),
                     round(low / 100000, digits),
                     round((low + tb.deltaClose) / 100000, digits),
-                    int(tb.volume), 0, 0,
+                    int(tb.volume), spread, 0,
                 ]
                 got += 1
             empty = empty + 1 if got == 0 else 0
