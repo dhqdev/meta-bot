@@ -202,7 +202,11 @@ class CashierAgent(Agent):
         tp = round(fill + d * dist_tp, digits) if dist_tp else None
         if mode == "live" and abs(sl - sl_est) > spec["point"]:
             placeholder = Trade(ticket=res.ticket, symbol=symbol, direction=side, volume=info["volume"], entry_price=fill, mode=mode)
-            await broker.modify(placeholder, sl, tp)
+            moved = await broker.modify(placeholder, sl, tp)
+            if not moved.ok:
+                # a corretora ficou com o stop e o alvo enviados na ordem: o registro segue o que está lá
+                sl, tp = sl_est, tp_est
+                self.log(f"Não consegui ajustar o stop de {symbol} ao preço executado ({moved.message or 'recusado'}); mantive {sl:g}.", kind="order", level="warning")
         risk_money = info["volume"] * dist_sl * value_per_price_unit(spec)
         ctx = {"votes": info["votes"], "risk_pct": info["risk_pct"], "max_bars": info.get("max_bars") or 0}
         with session_scope() as s:

@@ -39,6 +39,8 @@ class State:
         self.next_ticket = 1000
         self.orders_seen: list[dict] = []
         self.reject_fok = True  # simula corretora que não aceita FOK
+        self.slippage = 0.0  # diferença entre o preço pedido e o executado na abertura
+        self.reject_sltp = False  # simula corretora que recusa mudar stop/alvo
 
 
 state = State()
@@ -170,11 +172,14 @@ def order_send(request):
             return OrderResult(TRADE_RETCODE_DONE, 1, pos.ticket, pos.volume, request["price"], "Request executed", request)
         state.next_ticket += 1
         ticket = state.next_ticket
+        request = {**request, "price": request["price"] + state.slippage}
         ptype = POSITION_TYPE_BUY if request["type"] == ORDER_TYPE_BUY else POSITION_TYPE_SELL
         state.positions[ticket] = Position(ticket, request["symbol"], ptype, request["volume"], request["price"], request.get("sl", 0.0), request.get("tp", 0.0), request.get("magic", 0), 0.0, request.get("comment", ""))
         state.deals.append(Deal(len(state.deals) + 1, ticket, int(time.time()), int(time.time() * 1000), request["type"], 0, request.get("magic", 0), ticket, 3, request["volume"], request["price"], -3.5, 0.0, 0.0, 0.0, request["symbol"], ""))
         return OrderResult(TRADE_RETCODE_DONE, 1, ticket, request["volume"], request["price"], "Request executed", request)
     if action == TRADE_ACTION_SLTP:
+        if state.reject_sltp:
+            return OrderResult(10016, 0, 0, 0, 0, "Invalid stops", request)
         pos = state.positions[int(request["position"])]
         state.positions[pos.ticket] = pos._replace(sl=request["sl"], tp=request["tp"])
         return OrderResult(TRADE_RETCODE_DONE, 0, 0, 0, 0, "Request executed", request)
