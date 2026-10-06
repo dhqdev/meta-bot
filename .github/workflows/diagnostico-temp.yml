@@ -1,0 +1,21 @@
+name: Diagnóstico das entradas (temporário)
+on:
+  push:
+    branches: [claude/project-thread-bd95ed]
+permissions:
+  contents: read
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - run: python scripts/diagnosticar_entradas.py --dia 2026-10-05
+        working-directory: backend
