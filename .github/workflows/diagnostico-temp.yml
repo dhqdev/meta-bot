@@ -17,5 +17,5 @@ jobs:
           cache-dependency-path: backend/requirements*.txt
       - run: pip install -r requirements.txt
         working-directory: backend
-      - run: python scripts/diagnosticar_entradas.py --dia 2026-10-05
+      - run: python scripts/diagnosticar_entradas.py --dia 2026-10-05 --dias 10
         working-directory: backend

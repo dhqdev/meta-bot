@@ -42,18 +42,55 @@ def line(text: str = "") -> None:
     print(text, flush=True)
 
 
-def plan_at(manager, cands: list[dict]) -> list[dict]:
-    """Plano por pontuação (o mesmo que o Gustavo monta sem IA)."""
-    return manager.deterministic_plan(cands)
+def policy(cands: list[dict], limit: int, per_symbol: int, min_score: float = 0.45, activity: bool = False) -> list[dict]:
+    """Plano por pontuação com regras ajustáveis (para comparar alternativas)."""
+    def key(c):
+        if not activity:
+            return c["score"]
+        spd = float(c.get("tpm") or 0) / 21.4
+        return c["score"] * (0.75 + 0.25 * min(1.0, spd))
+    out, used = [], Counter()
+    for c in sorted(cands, key=key, reverse=True):
+        if len(out) >= limit:
+            break
+        if c["blocked"] or used[c["symbol"]] >= per_symbol or c["score"] < min_score:
+            continue
+        used[c["symbol"]] += 1
+        out.append(c)
+    return out
+
+
+POLICIES = {
+    "atual (3 setups, 1 por par)": dict(limit=3, per_symbol=1),
+    "6 setups, 1 por par": dict(limit=6, per_symbol=1),
+    "6 setups, até 2 por par": dict(limit=6, per_symbol=2),
+    "6 setups, até 2 por par + frequência": dict(limit=6, per_symbol=2, activity=True),
+    "10 setups, até 3 por par + frequência": dict(limit=10, per_symbol=3, activity=True),
+    "todas as livres (teto)": dict(limit=999, per_symbol=999, min_score=0.0),
+}
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dia", default="", help="AAAA-MM-DD (padrão: ontem em Brasília)")
+    parser.add_argument("--dia", default="", help="último dia, AAAA-MM-DD (padrão: ontem em Brasília)")
+    parser.add_argument("--dias", type=int, default=1, help="quantos dias úteis analisar, voltando a partir de --dia")
     args = parser.parse_args()
-    day = date.fromisoformat(args.dia) if args.dia else (datetime.now(BRT).date() - timedelta(days=1))
-    start = datetime(day.year, day.month, day.day, tzinfo=BRT).astimezone(timezone.utc)
-    end = start + timedelta(days=1)
+    last = date.fromisoformat(args.dia) if args.dia else (datetime.now(BRT).date() - timedelta(days=1))
+    days: list[date] = []
+    d = last
+    while len(days) < max(1, args.dias):
+        if d.weekday() < 5:
+            days.append(d)
+        d -= timedelta(days=1)
+    days.reverse()
+    windows = {
+        day: (
+            datetime(day.year, day.month, day.day, tzinfo=BRT).astimezone(timezone.utc),
+            datetime(day.year, day.month, day.day, tzinfo=BRT).astimezone(timezone.utc) + timedelta(days=1),
+        )
+        for day in days
+    }
+    first_ts, last_ts = windows[days[0]][0].timestamp(), windows[days[-1]][1].timestamp()
 
     settings = get_settings()
     set_secret_box(SecretBox(settings.secret_key))
@@ -73,26 +110,29 @@ async def main() -> int:
     schedule = office.agent("schedule")
     manager = office.agent("manager")
 
-    line(f"== Dia analisado: {day} (Brasília) = {start:%Y-%m-%d %H:%M} a {end:%Y-%m-%d %H:%M} UTC ==")
-    line(f"   pares: {', '.join(cfg.watchlist)} · tempos gráficos: {', '.join(cfg.timeframes)}")
+    line(f"== Dias analisados (Brasília): {', '.join(str(x) for x in days)} ==")
+    line(f"   origem dos preços: {office.market.source()} · pares: {', '.join(cfg.watchlist)} · tempos gráficos: {', '.join(cfg.timeframes)}")
     t0 = time.time()
     await schedule.refresh_hours()
     total = await strategist.run_ranking()
     approved = strategist.ranking(only_approved=True, limit=1000)
     line(f"   ranking: {total} backtests em {time.time() - t0:.0f}s, {len(approved)} aprovados")
     reasons = Counter()
+    by_tf_all = Counter()
     for p in strategist.ranking(limit=2000):
+        by_tf_all[p["timeframe"]] += 1
         if p["status"] != "aprovada":
             for r in (p["metrics"] or {}).get("reasons", []):
-                reasons[r.split(" (")[0].split(" <")[0]] += 1
+                reasons[r.split(" (")[0].split(" <")[0].split(" 0")[0].split(" 1")[0]] += 1
     line(f"   motivos das reprovações: {dict(reasons.most_common(6))}")
     by_tf = Counter(p["timeframe"] for p in approved)
-    line(f"   aprovadas por tempo gráfico: {dict(by_tf)}")
+    line(f"   aprovadas por tempo gráfico: {', '.join(f'{tf} {by_tf.get(tf, 0)}/{n}' for tf, n in by_tf_all.items())}")
 
-    # sinais do dia em cada setup aprovado
+    # sinais de cada setup aprovado nos dias analisados
     line("")
-    line("== Sinais do dia em cada estratégia aprovada ==")
+    line("== Sinais das estratégias aprovadas no período ==")
     signals: dict[int, list[tuple[int, int, float | None]]] = {}
+    tpm = {p["id"]: float((p["metrics"] or {}).get("trades_per_month") or 0) for p in approved}
     for p in approved:
         strat = get_strategy(p["strategy"])
         tf_sec = TIMEFRAME_SECONDS[p["timeframe"]]
@@ -107,56 +147,61 @@ async def main() -> int:
         out = []
         for i in range(bars.n):
             closes = int(bars.time[i]) + tf_sec
-            if not (start.timestamp() <= closes < end.timestamp()):
+            if not (first_ts <= closes < last_ts):
                 continue
-            d = 1 if sigs.long_entry[i] else -1 if sigs.short_entry[i] else 0
-            if d:
+            direction = 1 if sigs.long_entry[i] else -1 if sigs.short_entry[i] else 0
+            if direction:
                 nxt = int(bars.time[i + 1]) if i + 1 < bars.n else None
-                out.append((closes, d, trades.get(nxt) if nxt else None))
+                out.append((closes, direction, trades.get(nxt) if nxt else None))
         signals[p["id"]] = out
         m = p["metrics"] or {}
+        known = [r for _, _, r in out if r is not None]
         line(
             f"   {p['symbol']:7s} {p['timeframe']:3s} {p['strategy_name'][:34]:34s} acerto {m.get('win_rate', 0):.0%} "
-            f"{m.get('trades_per_month', 0):5.1f}/mês · pontuação {p['score']:.3f} · sinais no dia: {len(out)}"
-            + (f" (R: {', '.join('?' if r is None else f'{r:+.2f}' for _, _, r in out)})" if out else "")
+            f"{m.get('trades_per_month', 0):5.1f}/mês · pontuação {p['score']:.3f} · sinais: {len(out)}"
+            + (f" (soma {sum(known):+.2f}R em {len(known)} fechadas)" if known else "")
         )
-    all_sigs = sum(len(v) for v in signals.values())
 
-    # o que o plano estaria vigiando a cada hora
-    line("")
-    line("== Plano por pontuação, hora a hora (sem IA) ==")
+    # o que cada regra de plano estaria vigiando, hora a hora
     news = office.agent("news")
-    news.symbol_score = lambda symbol: {"score": 0.0, "confidence": 0.0, "alerts": []}  # dia passado: sem notícias
-    watched_hits = []
-    seen_plans = Counter()
+    news.symbol_score = lambda symbol: {"score": 0.0, "confidence": 0.0, "alerts": []}  # dias passados: sem notícias
     real_hour = schedule.hour_quality
-    for h in range(24):
-        at = start + timedelta(hours=h)
-        schedule.hour_quality = lambda symbol, at=None, _t=at: real_hour(symbol, _t)
+    hits: dict[str, list] = {name: [] for name in POLICIES}
+    per_day: dict[str, Counter] = {name: Counter() for name in POLICIES}
+    for day in days:
+        start = windows[day][0]
+        for h in range(24):
+            at = start + timedelta(hours=h)
+            schedule.hour_quality = lambda symbol, at=None, _t=at: real_hour(symbol, _t)
 
-        class _Fixed(datetime):
-            @classmethod
-            def now(cls, tz=None, _t=at):
-                return _t if tz is None else _t.astimezone(tz)
+            class _Fixed(datetime):
+                @classmethod
+                def now(cls, tz=None, _t=at):
+                    return _t if tz is None else _t.astimezone(tz)
 
-        manager_mod.datetime = _Fixed
-        try:
-            cands = manager.build_candidates()
-        finally:
-            manager_mod.datetime = datetime
-        plan = plan_at(manager, cands)
-        free = sum(1 for c in cands if not c["blocked"])
-        key = tuple(f"{p['symbol']} {p['timeframe']} {p['strategy']}" for p in plan)
-        seen_plans[key] += 1
-        ids = {p["profile_id"] for p in plan}
-        hits = [(pid, s) for pid, lst in signals.items() if pid in ids for s in lst if at.timestamp() <= s[0] < at.timestamp() + 3600]
-        watched_hits += hits
-        line(f"   {at.astimezone(BRT):%H}h BRT: {free:2d} livres de {len(cands)} · plano: {', '.join(key) or '(vazio)'} · sinais vigiados: {len(hits)}")
+            manager_mod.datetime = _Fixed
+            try:
+                cands = manager.build_candidates()
+            finally:
+                manager_mod.datetime = datetime
+            for c in cands:
+                c["tpm"] = tpm.get(c["profile_id"], 0.0)
+            for name, rules in POLICIES.items():
+                ids = {c["profile_id"] for c in policy(cands, **rules)}
+                got = [s for pid, lst in signals.items() if pid in ids for s in lst if at.timestamp() <= s[0] < at.timestamp() + 3600]
+                hits[name] += got
+                per_day[name][day] += len(got)
 
     line("")
-    line("== Resumo ==")
-    line(f"   sinais de TODAS as aprovadas no dia: {all_sigs}")
-    line(f"   sinais que caíram no plano vigiado:  {len(watched_hits)}")
+    line("== Regras de plano comparadas (sinais que o plano estaria vigiando) ==")
+    for name in POLICIES:
+        known = [r for _, _, r in hits[name] if r is not None]
+        wins = sum(1 for r in known if r > 0)
+        by_day = " ".join(f"{d:%d/%m}:{per_day[name][d]}" for d in days)
+        line(
+            f"   {name:40s} sinais {len(hits[name]):3d} · fechadas {len(known):3d} · acerto {wins / len(known) if known else 0:.0%} · "
+            f"soma {sum(known):+.2f}R · por dia {by_day}"
+        )
     return 0
 
 
