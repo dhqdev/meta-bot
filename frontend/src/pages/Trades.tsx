@@ -1,23 +1,36 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { LineChart } from "../components/Charts";
 import { Badge, Button, Card, Empty, Loading, Select, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { dateTime, DIRECTION_LABEL, EXIT_LABEL, money, num, pct, signed, time } from "../lib/format";
+import { dateTime, DIRECTION_LABEL, EXIT_LABEL, num, pct, signed, signedCash, time } from "../lib/format";
 import { useLive } from "../lib/live";
+import { act } from "../lib/notify";
 
 const SIGNAL_TONE: Record<string, "green" | "red" | "gold" | "slate" | "blue"> = { executado: "green", vetado: "red", falhou: "red", aguardando: "gold", expirado: "slate", aprovado: "blue", proposto: "slate", cancelado: "slate" };
 
 export function TradesPage() {
   const live = useLive();
-  const [mode, setMode] = useState<string>(live.system.mode || "paper");
+  const [mode, setModeState] = useState<string>(live.system.mode || "paper");
+  // segue o modo do sistema até o dono escolher outro (a tela pode abrir antes do WebSocket mandar o modo)
+  const picked = useRef(false);
+  useEffect(() => {
+    if (!picked.current && live.system.mode) setModeState(live.system.mode);
+  }, [live.system.mode]);
+  const setMode = (m: string) => {
+    picked.current = true;
+    setModeState(m);
+  };
+  const [closing, setClosing] = useState<number | null>(null);
+  const cur = live.office.risk?.currency || live.office.account?.currency;
   const summary = useQuery({ queryKey: ["summary", mode], queryFn: () => api.get<any>(`/api/trades/summary?mode=${mode}&days=180`), refetchInterval: 30000 });
   const open = useQuery({ queryKey: ["open-trades"], queryFn: () => api.get<any[]>("/api/trades/open"), refetchInterval: 8000 });
   const trades = useQuery({ queryKey: ["trades", mode], queryFn: () => api.get<any[]>(`/api/trades?status=closed&mode=${mode}&limit=300`), refetchInterval: 30000 });
   const signals = useQuery({ queryKey: ["signals"], queryFn: () => api.get<any[]>("/api/strategies/signals?limit=60"), refetchInterval: 20000 });
   const decisions = useQuery({ queryKey: ["decisions"], queryFn: () => api.get<any[]>("/api/decisions?limit=15"), refetchInterval: 60000 });
   const s = summary.data;
+  const equity = useMemo(() => (s?.equity ?? []).map((p: any) => ({ t: p.t, v: p.equity })), [s?.equity]);
 
   return (
     <div className="space-y-4">
@@ -29,15 +42,15 @@ export function TradesPage() {
         <Select value={mode} onChange={setMode} options={[["paper", "Conta simulada"], ["live", "Conta da corretora (MT5)"]]} className="w-56" />
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
-        <Stat label="Resultado" value={signed(s?.pnl)} tone={(s?.pnl ?? 0) >= 0 ? "up" : "down"} hint="últimos 180 dias" />
-        <Stat label="Hoje" value={signed(s?.today_pnl)} tone={(s?.today_pnl ?? 0) >= 0 ? "up" : "down"} />
+        <Stat label="Resultado" value={signedCash(s?.pnl, cur)} tone={(s?.pnl ?? 0) >= 0 ? "up" : "down"} hint="últimos 180 dias" />
+        <Stat label="Hoje" value={signedCash(s?.today_pnl, cur)} hint="operações fechadas hoje" tone={(s?.today_pnl ?? 0) >= 0 ? "up" : "down"} />
         <Stat label="Operações" value={s?.trades ?? 0} />
         <Stat label="Acerto" value={pct(s?.win_rate)} />
-        <Stat label="Fator de lucro" value={num(s?.profit_factor)} />
+        <Stat label="Fator de lucro" value={s?.profit_factor == null ? (s?.wins ? "sem perdas" : "—") : num(s.profit_factor)} hint="ganhos ÷ perdas" />
         <Stat label="Média por operação" value={`${signed(s?.avg_r)}R`} />
       </div>
       <Card title="Patrimônio">
-        {s?.equity?.length > 1 ? <LineChart points={s.equity.map((p: any) => ({ t: p.t, v: p.equity }))} height={240} /> : <Empty>O Caio registra o patrimônio a cada minuto; a curva aparece aqui.</Empty>}
+        {equity.length > 1 ? <LineChart points={equity} height={240} /> : <Empty>O Caio registra o patrimônio a cada minuto; a curva aparece aqui.</Empty>}
       </Card>
       <Card title={`Posições abertas (${open.data?.length ?? 0})`} pad={false}>
         {open.isLoading ? (
@@ -80,17 +93,21 @@ export function TradesPage() {
                       <td className="px-2 text-right tabular-nums text-down">{num(t.sl, 5)}</td>
                       <td className="px-2 text-right tabular-nums text-up">{num(t.tp, 5)}</td>
                       <td className={clsx("px-2 text-right tabular-nums font-semibold", (t.open_pnl ?? 0) >= 0 ? "text-up" : "text-down")}>
-                        {signed(t.open_pnl)} <span className="text-xs">({signed(t.open_r)}R)</span>
+                        {t.open_pnl == null ? "sem cotação" : signedCash(t.open_pnl, cur)} <span className="text-xs">({signed(t.open_r)}R)</span>
                       </td>
                       <td className="px-3 text-right">
                         <Button
                           variant="ghost"
                           className="px-2 py-1 text-xs"
+                          loading={closing === t.id}
                           onClick={async () => {
-                            if (confirm(`Fechar ${t.symbol} agora a mercado?`)) {
-                              await api.post(`/api/trades/${t.id}/close`);
-                              void open.refetch();
-                            }
+                            if (!confirm(`Fechar ${t.symbol} agora a mercado?`)) return;
+                            setClosing(t.id);
+                            await act(() => api.post(`/api/trades/${t.id}/close`), `${t.symbol} fechada.`);
+                            setClosing(null);
+                            void open.refetch();
+                            void summary.refetch();
+                            void trades.refetch();
                           }}
                         >
                           Fechar
@@ -122,7 +139,7 @@ export function TradesPage() {
                   <td className="px-4 py-2">{r.name}</td>
                   <td className="px-2 text-right text-muted">{r.trades} oper.</td>
                   <td className="px-2 text-right">{pct(r.wins / Math.max(1, r.trades))}</td>
-                  <td className={clsx("px-4 text-right tabular-nums", r.pnl >= 0 ? "text-up" : "text-down")}>{signed(r.pnl)}</td>
+                  <td className={clsx("px-4 text-right tabular-nums", r.pnl >= 0 ? "text-up" : "text-down")}>{signedCash(r.pnl, cur)}</td>
                 </tr>
               ))}
             </tbody>
@@ -133,7 +150,7 @@ export function TradesPage() {
             </div>
           )}
         </Card>
-        <Card title="Decisões do Gerente" pad={false}>
+        <Card title="Decisões do Gerente" actions={<span className="text-[10px] text-muted">simulado e MT5</span>} pad={false}>
           <div className="scroll-thin max-h-80 divide-y divide-line overflow-y-auto">
             {decisions.data?.map((d) => (
               <div key={d.id} className="px-4 py-2 text-sm">
@@ -152,7 +169,7 @@ export function TradesPage() {
           </div>
         </Card>
       </div>
-      <Card title="Sinais (Estela → Gustavo → Rita → Caio)" pad={false}>
+      <Card title="Sinais (Estela → Gustavo → Rita → Caio)" actions={<span className="text-[10px] text-muted">simulado e MT5</span>} pad={false}>
         <div className="scroll-thin max-h-96 overflow-auto">
           <table className="w-full text-sm">
             <tbody>
@@ -204,7 +221,7 @@ export function TradesPage() {
                   <td className="px-2 text-xs">{EXIT_LABEL[t.exit_reason] ?? t.exit_reason}</td>
                   <td className="px-2 text-right tabular-nums">{t.volume}</td>
                   <td className={clsx("px-2 text-right tabular-nums", t.pnl_r >= 0 ? "text-up" : "text-down")}>{signed(t.pnl_r)}</td>
-                  <td className={clsx("px-3 text-right tabular-nums font-semibold", t.pnl >= 0 ? "text-up" : "text-down")}>{money(t.pnl)}</td>
+                  <td className={clsx("px-3 text-right tabular-nums font-semibold", t.pnl >= 0 ? "text-up" : "text-down")}>{signedCash(t.pnl, cur)}</td>
                 </tr>
               ))}
             </tbody>

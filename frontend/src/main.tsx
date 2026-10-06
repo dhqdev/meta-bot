@@ -9,7 +9,7 @@ import { AuthProvider } from "./lib/auth";
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
+      retry: (count, error) => !(error instanceof ApiError && error.status > 0 && error.status < 500) && count < 2,
       refetchOnWindowFocus: true,
       staleTime: 5000,
     },

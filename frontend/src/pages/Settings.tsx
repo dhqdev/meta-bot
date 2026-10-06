@@ -3,11 +3,12 @@ import clsx from "clsx";
 import { ChevronDown, ExternalLink, Lock, Plus, RotateCcw, Save, Trash2, Undo2 } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Avatar, Badge, Button, Card, ErrorBox, Field, Input, Loading, PasswordPrompt, Select, Switch } from "../components/ui";
+import { AGENT_NAMES, Avatar, Badge, Button, Card, ErrorBox, Field, Input, Loading, PasswordPrompt, Select, Switch } from "../components/ui";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { cash, currencySymbol, dateTime, money } from "../lib/format";
 import { patchSystem, useLive } from "../lib/live";
+import { act, notify } from "../lib/notify";
 
 type Cfg = Record<string, any>;
 type Setter = (k: string, v: any) => void;
@@ -242,7 +243,7 @@ export function SettingsPage() {
   // Salva sozinho pouco depois da última mudança (não se perde ao trocar de tela)
   useEffect(() => {
     if (!changedSig || saving || changedSig === failed.current) return;
-    const t = setTimeout(() => pending.current && void save(pending.current), 900);
+    const t = setTimeout(() => pending.current && void save(pending.current), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [changedSig, saving]);
@@ -358,6 +359,32 @@ function NumInput({ value, onChange, int, nullable, suffix }: { value: number | 
   );
 }
 
+const toList = (t: string) =>
+  t
+    .split(",")
+    .map((x) => x.trim().toUpperCase())
+    .filter(Boolean);
+
+/** Lista separada por vírgula: o texto é do dono enquanto digita (a vírgula não some); vira lista a cada mudança. */
+function ListInput({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [text, setText] = useState(value.join(", "));
+  useEffect(() => {
+    if (JSON.stringify(toList(text)) !== JSON.stringify(value)) setText(value.join(", "));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return (
+    <Input
+      value={text}
+      onChange={(e) => {
+        setText(e.target.value);
+        const next = toList(e.target.value);
+        if (JSON.stringify(next) !== JSON.stringify(value)) onChange(next);
+      }}
+      onBlur={() => setText(value.join(", "))}
+    />
+  );
+}
+
 const showValue = (f: FieldDef, v: any): string => {
   if (f.type === "switch") return v ? "ligado" : "desligado";
   if (f.type === "select") return f.options?.find((o) => o[0] === v)?.[1] ?? String(v);
@@ -395,21 +422,7 @@ function FieldControl({ f: def, cfg, set, defaults }: { f: FieldDef; cfg: Cfg; s
   let control: ReactNode;
   if (type === "select") control = <Select value={v} onChange={(x) => set(f.key, x)} options={f.options ?? []} />;
   else if (type === "time") control = <Input type="time" value={v ?? ""} onChange={(e) => set(f.key, e.target.value)} />;
-  else if (type === "list")
-    control = (
-      <Input
-        value={(v ?? []).join(", ")}
-        onChange={(e) =>
-          set(
-            f.key,
-            e.target.value
-              .split(",")
-              .map((x) => x.trim().toUpperCase())
-              .filter(Boolean),
-          )
-        }
-      />
-    );
+  else if (type === "list") control = <ListInput value={v ?? []} onChange={(x) => set(f.key, x)} />;
   else if (type === "impacts")
     control = (
       <div className="flex flex-wrap gap-2">
@@ -482,7 +495,7 @@ function GoalsCard({ cfg, set, setMany, defaults }: { cfg: Cfg; set: Setter; set
   };
   const unitOptions: Array<[string, string]> = [
     ["percent", "% do patrimônio"],
-    ["money", `valor (${cur || "moeda da conta"})`],
+    ["money", `valor (${currencySymbol(cur) || "moeda da conta"})`],
   ];
   const f = (key: string) => SIMPLE_FIELDS[key];
   return (
@@ -535,7 +548,7 @@ function GoalsCard({ cfg, set, setMany, defaults }: { cfg: Cfg; set: Setter; set
         </div>
         <div>
           <FieldControl f={f("risk_per_trade_pct")} cfg={cfg} set={set} defaults={defaults} />
-          {equity > 0 && <span className="mt-1 block text-[11px] text-muted">≈ {money((equity * (cfg.risk_per_trade_pct || 0)) / 100)} {cur} por operação, se bater no stop</span>}
+          {equity > 0 && <span className="mt-1 block text-[11px] text-muted">≈ {cash((equity * (cfg.risk_per_trade_pct || 0)) / 100, cur)} por operação, se bater no stop</span>}
         </div>
         <FieldControl f={f("max_open_positions")} cfg={cfg} set={set} defaults={defaults} />
         <FieldControl f={f("max_drawdown_pct")} cfg={cfg} set={set} defaults={defaults} />
@@ -589,7 +602,15 @@ function MarketsCard({ cfg, set, pairs }: { cfg: Cfg; set: Setter; pairs: string
               const on = cfg.timeframes.includes(tf);
               return (
                 <label key={tf} className={clsx("flex cursor-pointer items-start gap-2 rounded-lg border px-2 py-1.5 text-sm", on ? "border-gold/60 bg-gold/10" : "border-line")}>
-                  <input type="checkbox" className="mt-1" checked={on} onChange={(e) => set("timeframes", e.target.checked ? [...cfg.timeframes, tf] : cfg.timeframes.filter((x: string) => x !== tf))} />
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={on}
+                    onChange={(e) => {
+                      if (!e.target.checked && cfg.timeframes.length <= 1) return notify("Deixe pelo menos um tempo gráfico marcado.", "info");
+                      set("timeframes", e.target.checked ? [...cfg.timeframes, tf] : cfg.timeframes.filter((x: string) => x !== tf));
+                    }}
+                  />
                   <span>
                     <b>{tf}</b>
                     <span className="block text-[10px] leading-tight text-muted">{info}</span>
@@ -724,7 +745,7 @@ function AICard({ cfg, set, ai }: { cfg: Cfg; set: Setter; ai: any }) {
           Últimos 7 dias:{" "}
           {ai.usage.by_agent.map((u: any) => (
             <span key={u.agent} className="mr-3 inline-block">
-              {u.agent}: {u.calls} chamadas · US$ {money(u.cost_usd, 3)}
+              {AGENT_NAMES[u.agent] ?? u.agent}: {u.calls} chamadas · US$ {money(u.cost_usd, 3)}
             </span>
           ))}
         </div>
@@ -750,6 +771,7 @@ function AICard({ cfg, set, ai }: { cfg: Cfg; set: Setter; ai: any }) {
 
 function ModeCard() {
   const live = useLive();
+  const qc = useQueryClient();
   const [prompt, setPrompt] = useState<null | "live" | "kill" | "paper-reset">(null);
   const risk = live.office.risk || {};
   const mode = live.system.mode || "paper";
@@ -767,8 +789,12 @@ function ModeCard() {
           <Button
             variant="ghost"
             onClick={async () => {
-              const r = await api.post<any>("/api/system/mode", { mode: "paper" });
-              patchSystem({ mode: r.mode });
+              if (!confirm("Voltar para a conta simulada? Nenhuma ordem nova vai para a corretora.")) return;
+              await act(async () => {
+                const r = await api.post<any>("/api/system/mode", { mode: "paper" });
+                patchSystem({ mode: r.mode });
+                void qc.invalidateQueries();
+              }, "Modo simulado: nenhuma ordem vai para a corretora.");
             }}
           >
             Voltar para o simulado
@@ -796,6 +822,8 @@ function ModeCard() {
           const r = await api.post<any>("/api/system/mode", { mode: "live", password, confirm: true });
           patchSystem({ mode: r.mode, data_source: "mt5" });
           setPrompt(null);
+          notify("Conta do MT5 ligada: as ordens vão para a corretora.", "info");
+          void qc.invalidateQueries();
         }}
       />
       <PasswordPrompt
@@ -806,6 +834,8 @@ function ModeCard() {
         onConfirm={async (password) => {
           await api.post("/api/system/kill-switch/reset", { password });
           setPrompt(null);
+          notify("Trava geral liberada: a equipe pode voltar a entrar.");
+          void qc.invalidateQueries();
         }}
       />
       <PasswordPrompt
@@ -816,6 +846,8 @@ function ModeCard() {
         onConfirm={async (password) => {
           await api.post("/api/system/paper/reset", { password });
           setPrompt(null);
+          notify("Conta simulada zerada: saldo de volta ao valor inicial.");
+          void qc.invalidateQueries();
         }}
       />
     </Card>
@@ -838,7 +870,8 @@ function MT5Card() {
   const q = useQuery({ queryKey: ["terminals"], queryFn: () => api.get<TerminalRow[]>("/api/settings/terminals") });
   const [edit, setEdit] = useState<(Partial<TerminalRow> & { token?: string; broker_password?: string }) | null>(null);
   const [test, setTest] = useState<any>(null);
-  const [prompt, setPrompt] = useState(false);
+  const [prompt, setPrompt] = useState<null | "save" | "remove">(null);
+  const [testing, setTesting] = useState<number | null>(null);
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<any>("/api/settings") });
   const panelUrl: string = settings.data?.mt5?.panel_url || "";
   const mt5 = live.system.mt5 || {};
@@ -875,7 +908,17 @@ function MT5Card() {
               <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setEdit({ ...t, token: "", broker_password: "" })}>
                 Editar
               </Button>
-              <Button variant="ghost" className="px-2 py-1 text-xs" onClick={async () => setTest(await api.post("/api/settings/terminals/test", { bridge_url: t.bridge_url, terminal_id: t.id }))}>
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                loading={testing === t.id}
+                onClick={async () => {
+                  setTesting(t.id);
+                  setTest(null);
+                  await act(async () => setTest(await api.post("/api/settings/terminals/test", { bridge_url: t.bridge_url, terminal_id: t.id })));
+                  setTesting(null);
+                }}
+              >
                 Testar
               </Button>
             </div>
@@ -932,17 +975,7 @@ function MT5Card() {
           <Switch checked={!!edit.active} onChange={(v) => setEdit({ ...edit, active: v })} label="Usar este terminal" />
           <div className="flex justify-between">
             {edit.id ? (
-              <Button
-                variant="ghost"
-                className="text-down"
-                onClick={async () => {
-                  const password = window.prompt("Confirme com sua senha para remover o terminal");
-                  if (!password) return;
-                  await api.del(`/api/settings/terminals/${edit.id}`, { password });
-                  setEdit(null);
-                  void q.refetch();
-                }}
-              >
+              <Button variant="ghost" className="text-down" onClick={() => setPrompt("remove")}>
                 <Trash2 className="h-4 w-4" /> Remover
               </Button>
             ) : (
@@ -952,22 +985,37 @@ function MT5Card() {
               <Button variant="ghost" onClick={() => setEdit(null)}>
                 Cancelar
               </Button>
-              <Button onClick={() => setPrompt(true)}>Salvar terminal</Button>
+              <Button onClick={() => setPrompt("save")}>Salvar terminal</Button>
             </div>
           </div>
         </div>
       )}
       <PasswordPrompt
-        open={prompt}
+        open={prompt === "save"}
         title="Salvar terminal"
         description="Os dados de acesso ficam criptografados no banco."
-        onCancel={() => setPrompt(false)}
+        onCancel={() => setPrompt(null)}
         onConfirm={async (password) => {
           const body = { name: edit?.name, bridge_url: edit?.bridge_url, token: edit?.token || null, login: edit?.login || null, server: edit?.server || null, broker_password: edit?.broker_password || null, active: !!edit?.active, password };
           if (edit?.id) await api.put(`/api/settings/terminals/${edit.id}`, body);
           else await api.post("/api/settings/terminals", body);
-          setPrompt(false);
+          setPrompt(null);
           setEdit(null);
+          notify("Terminal salvo.");
+          void q.refetch();
+        }}
+      />
+      <PasswordPrompt
+        open={prompt === "remove"}
+        title="Remover terminal"
+        description={`O terminal "${edit?.name ?? ""}" deixa de ser usado e os dados de acesso são apagados.`}
+        confirmLabel="Remover"
+        onCancel={() => setPrompt(null)}
+        onConfirm={async (password) => {
+          await api.del(`/api/settings/terminals/${edit?.id}`, { password });
+          setPrompt(null);
+          setEdit(null);
+          notify("Terminal removido.");
           void q.refetch();
         }}
       />
@@ -1021,7 +1069,10 @@ function SecurityCard() {
   const [error, setError] = useState<unknown>(null);
   const [totp, setTotp] = useState<{ secret: string; uri: string; qr: string } | null>(null);
   const [code, setCode] = useState("");
+  const [totpError, setTotpError] = useState<unknown>(null);
   const [prompt, setPrompt] = useState<null | "setup">(null);
+  const [disabling, setDisabling] = useState(false);
+  const [off, setOff] = useState({ password: "", code: "" });
   return (
     <Card title="Segurança">
       <div className="grid gap-6 md:grid-cols-2">
@@ -1051,7 +1102,44 @@ function SecurityCard() {
         <div className="space-y-2">
           <h4 className="text-sm font-semibold">Verificação em duas etapas</h4>
           {status?.totp_enabled ? (
-            <Badge tone="green">ativa</Badge>
+            <div className="space-y-2">
+              <Badge tone="green">ativa</Badge>
+              {!disabling ? (
+                <div>
+                  <Button variant="ghost" className="text-xs" onClick={() => setDisabling(true)}>
+                    Desativar (trocou de celular?)
+                  </Button>
+                </div>
+              ) : (
+                <form
+                  className="space-y-2"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setTotpError(null);
+                    try {
+                      await api.post("/api/auth/2fa/disable", off);
+                      setDisabling(false);
+                      setOff({ password: "", code: "" });
+                      notify("Verificação em duas etapas desativada.", "info");
+                      await refresh();
+                    } catch (err) {
+                      setTotpError(err);
+                    }
+                  }}
+                >
+                  <Input type="password" placeholder="Sua senha" value={off.password} onChange={(e) => setOff({ ...off, password: e.target.value })} autoComplete="current-password" />
+                  <Input inputMode="numeric" placeholder="Código do app autenticador" value={off.code} onChange={(e) => setOff({ ...off, code: e.target.value })} className="max-w-56" />
+                  <div className="flex gap-2">
+                    <Button type="button" variant="ghost" onClick={() => setDisabling(false)}>
+                      Cancelar
+                    </Button>
+                    <Button type="submit" variant="danger" disabled={!off.password || !off.code}>
+                      Desativar
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
           ) : totp ? (
             <div className="space-y-2">
               <img src={totp.qr} alt="QR code" className="h-40 w-40 rounded bg-white p-2" />
@@ -1060,12 +1148,15 @@ function SecurityCard() {
                 <Input inputMode="numeric" placeholder="Código de 6 dígitos" value={code} onChange={(e) => setCode(e.target.value)} className="max-w-40" />
                 <Button
                   onClick={async () => {
+                    setTotpError(null);
                     try {
                       await api.post("/api/auth/2fa/enable", { code });
                       setTotp(null);
+                      setCode("");
+                      notify("Verificação em duas etapas ativada.");
                       await refresh();
                     } catch (err) {
-                      setError(err);
+                      setTotpError(err);
                     }
                   }}
                 >
@@ -1078,6 +1169,7 @@ function SecurityCard() {
               Configurar com app autenticador
             </Button>
           )}
+          <ErrorBox error={totpError} />
         </div>
       </div>
       <PasswordPrompt

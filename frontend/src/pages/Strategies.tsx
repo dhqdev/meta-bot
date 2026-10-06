@@ -3,8 +3,9 @@ import clsx from "clsx";
 import { Dna, FlaskConical, Play, RefreshCw } from "lucide-react";
 import { useMemo, useState } from "react";
 import { LineChart } from "../components/Charts";
-import { Badge, Button, Card, Empty, ErrorBox, Field, Input, Loading, Select } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, Select } from "../components/ui";
 import { api } from "../lib/api";
+import { act } from "../lib/notify";
 import { ago, dateTime, EXIT_LABEL, num, pct, signed } from "../lib/format";
 
 const RANK_OPTIONS: Array<[string, string]> = [
@@ -129,10 +130,24 @@ function Ranking() {
       title={`Ranking · ${RANK_OPTIONS.find((o) => o[0] === q.data?.rank_by)?.[1] ?? ""}`}
       actions={
         <>
-          <Button variant="ghost" className="text-xs" onClick={() => api.post("/api/strategies/ranking/run").then(() => setTimeout(() => q.refetch(), 3000))}>
-            <RefreshCw className={clsx("h-3.5 w-3.5", q.data?.running && "animate-spin")} /> Rodar agora
+          <Button
+            variant="ghost"
+            className="text-xs"
+            disabled={!!q.data?.running}
+            onClick={async () => {
+              if (await act(() => api.post("/api/strategies/ranking/run"), "A Estela começou a refazer o ranking. A tabela atualiza sozinha.")) setTimeout(() => void q.refetch(), 3000);
+            }}
+          >
+            <RefreshCw className={clsx("h-3.5 w-3.5", q.data?.running && "animate-spin")} /> {q.data?.running ? "Rodando…" : "Rodar agora"}
           </Button>
-          <Button variant="ghost" className="text-xs" onClick={() => api.post("/api/strategies/evolution/run")}>
+          <Button
+            variant="ghost"
+            className="text-xs"
+            onClick={async () => {
+              if (!confirm("Evoluir agora? A Estela testa variações das melhores estratégias (pode levar alguns minutos) e só adota as que melhoram na prova.")) return;
+              await act(() => api.post("/api/strategies/evolution/run"), "Evolução começou. As versões novas aparecem no ranking quando passarem na prova.");
+            }}
+          >
             <Dna className="h-3.5 w-3.5" /> Evoluir agora
           </Button>
         </>
@@ -140,8 +155,8 @@ function Ranking() {
       pad={false}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-line p-3">
-        <Select value={symbol} onChange={setSymbol} options={[["", "Todos os ativos"], ...symbols.map((s) => [s, s] as [string, string])]} className="w-40" />
-        <Select value={tf} onChange={setTf} options={[["", "Todos os tempos"], ...TFS.map((t) => [t, t] as [string, string])]} className="w-44" />
+        <Select value={symbol} onChange={(v) => { setSymbol(v); setLimit(40); }} options={[["", "Todos os ativos"], ...symbols.map((s) => [s, s] as [string, string])]} className="w-40" />
+        <Select value={tf} onChange={(v) => { setTf(v); setLimit(40); }} options={[["", "Todos os tempos"], ...TFS.map((t) => [t, t] as [string, string])]} className="w-44" />
         <label className="flex items-center gap-2 text-sm text-slate-300">
           <input type="checkbox" checked={onlyApproved} onChange={(e) => setOnlyApproved(e.target.checked)} /> só aprovadas
         </label>
@@ -169,7 +184,7 @@ function Ranking() {
                 <th className="px-2 text-right">Fator lucro</th>
                 <th className="px-2 text-right">Expect.</th>
                 <th className="px-2 text-right">Queda máx.</th>
-                <th className="px-2 text-right" title="Fora da amostra: período recente que não foi usado para escolher">
+                <th className="px-2 text-right" title="Fora da amostra (período recente que não foi usado para escolher): expectativa por operação · número de operações">
                   Recente
                 </th>
                 <th className="px-2 text-right">Real</th>
@@ -203,8 +218,8 @@ function Ranking() {
                     <td className="px-2 text-right tabular-nums">{num(m.profit_factor)}</td>
                     <td className={clsx("px-2 text-right tabular-nums", (m.expectancy_r ?? 0) >= 0 ? "text-up" : "text-down")}>{signed(m.expectancy_r)}R</td>
                     <td className="px-2 text-right tabular-nums text-muted">{num(m.max_dd_pct, 1)}%</td>
-                    <td className={clsx("px-2 text-right tabular-nums", (o.expectancy_r ?? 0) >= 0 ? "text-up" : "text-down")}>
-                      {pct(o.win_rate)} · {o.trades ?? 0}
+                    <td className={clsx("px-2 text-right tabular-nums", (o.expectancy_r ?? 0) >= 0 ? "text-up" : "text-down")} title={`Na prova: acerto ${pct(o.win_rate)} em ${o.trades ?? 0} operações`}>
+                      {signed(o.expectancy_r)}R · {o.trades ?? 0}
                     </td>
                     <td className="px-2 text-right tabular-nums text-muted">{live.n ? `${live.wins}/${live.n}` : "—"}</td>
                     <td className="px-3 text-right text-muted">v{r.version}</td>
@@ -232,16 +247,11 @@ function Ranking() {
 
 function ProfileDetail({ id, onClose }: { id: number | null; onClose: () => void }) {
   const q = useQuery({ queryKey: ["profile", id], queryFn: () => api.get<any>(`/api/strategies/profiles/${id}`), enabled: !!id });
-  if (!id) return null;
   const d = q.data;
   return (
-    <div className="border-t border-line bg-panel2/40 p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h3 className="font-pixel text-[10px] text-gold">{d ? `${d.strategy_name} · ${d.symbol} ${d.timeframe} · v${d.version}` : "Carregando…"}</h3>
-        <button onClick={onClose} className="text-xs text-muted hover:text-white">
-          fechar
-        </button>
-      </div>
+    <Modal open={!!id} onClose={onClose} title={d ? `${d.strategy_name} · ${d.symbol} ${d.timeframe} · v${d.version}` : "Estratégia"} wide>
+      {q.isLoading && <Loading />}
+      <ErrorBox error={q.error} />
       {d && (
         <div className="grid gap-4 text-sm md:grid-cols-3">
           <div>
@@ -278,7 +288,7 @@ function ProfileDetail({ id, onClose }: { id: number | null; onClose: () => void
           </div>
         </div>
       )}
-    </div>
+    </Modal>
   );
 }
 
@@ -291,12 +301,17 @@ function Backtest() {
   const [sel, setSel] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const symbols = useQuery({ queryKey: ["symbols", symbol], queryFn: () => api.get<any[]>(`/api/market/symbols?q=${encodeURIComponent(symbol)}`), enabled: symbol.length >= 2 });
+  // os 10 pares fixos da equipe (com o sufixo da corretora, se houver)
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<any>("/api/settings") });
+  const suffix: string = settings.data?.config?.symbol_suffix ?? "";
+  const pairs: string[] = (settings.data?.options?.pairs ?? ["EURUSD"]).map((p: string) => p + suffix);
   const run = async () => {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post<any>("/api/strategies/backtest", { symbol, timeframe: tf, strategies: picked.length ? picked : null });
+      const r = await api.post<any>("/api/strategies/backtest", { symbol: pairs.includes(symbol) ? symbol : pairs[0], timeframe: tf, strategies: picked.length ? picked : null });
+      // aprovadas primeiro, depois quem mais ganha por operação (não deixa uma estratégia perdedora no topo)
+      r.results = [...r.results].sort((a: any, b: any) => Number(b.approved) - Number(a.approved) || (b.metrics.expectancy_r ?? 0) - (a.metrics.expectancy_r ?? 0));
       setResult(r);
       setSel(0);
     } catch (e) {
@@ -310,15 +325,8 @@ function Backtest() {
     <div className="space-y-4">
       <Card title="Backtest sob demanda">
         <div className="grid gap-3 md:grid-cols-[1fr_140px_auto]">
-          <Field label="Ativo (como aparece na sua corretora)">
-            <Input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} list="symbol-list" />
-            <datalist id="symbol-list">
-              {symbols.data?.map((s) => (
-                <option key={s.name} value={s.name}>
-                  {s.description}
-                </option>
-              ))}
-            </datalist>
+          <Field label="Par">
+            <Select value={pairs.includes(symbol) ? symbol : pairs[0]} onChange={setSymbol} options={pairs.map((p) => [p, p] as [string, string])} />
           </Field>
           <Field label="Tempo gráfico">
             <Select value={tf} onChange={setTf} options={TFS.map((t) => [t, t] as [string, string])} />

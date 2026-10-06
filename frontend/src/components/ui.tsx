@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Loader2, X } from "lucide-react";
 import { useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { dismiss, useToasts } from "../lib/notify";
 import { portrait } from "../office/sprites";
 
 export function Card({ title, actions, children, className, pad = true, fill = false }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string; pad?: boolean; fill?: boolean }) {
@@ -39,7 +40,7 @@ export function Button({ variant = "primary", loading, className, children, ...r
   );
 }
 
-export function Badge({ children, tone = "slate", className }: { children: ReactNode; tone?: "slate" | "green" | "red" | "gold" | "blue" | "purple"; className?: string }) {
+export function Badge({ children, tone = "slate", className, title }: { children: ReactNode; tone?: "slate" | "green" | "red" | "gold" | "blue" | "purple"; className?: string; title?: string }) {
   const tones = {
     slate: "bg-slate-700/40 text-slate-300 border-slate-600/40",
     green: "bg-emerald-500/15 text-emerald-300 border-emerald-500/30",
@@ -48,7 +49,11 @@ export function Badge({ children, tone = "slate", className }: { children: React
     blue: "bg-sky-500/15 text-sky-300 border-sky-500/30",
     purple: "bg-violet-500/15 text-violet-300 border-violet-500/30",
   };
-  return <span className={clsx("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-semibold", tones[tone], className)}>{children}</span>;
+  return (
+    <span title={title} className={clsx("inline-flex items-center gap-1 whitespace-nowrap rounded-md border px-1.5 py-0.5 text-[11px] font-semibold", tones[tone], className)}>
+      {children}
+    </span>
+  );
 }
 
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "up" | "down" | "gold" }) {
@@ -115,7 +120,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-export function Modal({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {
+export function Modal({ open, onClose, title, children, wide }: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     if (open) window.addEventListener("keydown", onKey);
@@ -124,7 +129,7 @@ export function Modal({ open, onClose, title, children }: { open: boolean; onClo
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4" onClick={onClose}>
-      <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-line bg-panel p-5 sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className={clsx("max-h-[92vh] w-full overflow-y-auto rounded-t-2xl border border-line bg-panel p-5 sm:rounded-2xl", wide ? "max-w-4xl" : "max-w-lg")} onClick={(e) => e.stopPropagation()}>
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-pixel text-[11px] text-gold">{title}</h3>
           <button onClick={onClose} className="rounded p-1 text-muted hover:bg-panel2" aria-label="Fechar">
@@ -226,3 +231,20 @@ export const AGENT_NAMES: Record<string, string> = {
   infra: "Tito",
   system: "Sistema",
 };
+
+/** Avisos rápidos das ações (sucesso e erro), acima da barra de baixo no celular. */
+export function Toasts() {
+  const toasts = useToasts();
+  if (!toasts.length) return null;
+  const tone = { ok: "border-emerald-500/40 bg-emerald-950/95 text-emerald-100", error: "border-red-500/50 bg-red-950/95 text-red-100", info: "border-sky-500/40 bg-slate-900/95 text-sky-100" };
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(5rem+env(safe-area-inset-bottom))] z-[60] flex flex-col items-center gap-2 px-3 lg:bottom-6 lg:items-end lg:px-6" role="status" aria-live="polite">
+      {toasts.map((t) => (
+        <button key={t.id} onClick={() => dismiss(t.id)} className={clsx("pointer-events-auto max-w-md rounded-lg border px-4 py-2.5 text-left text-sm shadow-2xl shadow-black/50", tone[t.tone])}>
+          {t.tone === "error" ? "⚠️ " : t.tone === "ok" ? "✓ " : ""}
+          {t.text}
+        </button>
+      ))}
+    </div>
+  );
+}

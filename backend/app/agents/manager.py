@@ -438,7 +438,9 @@ class ManagerAgent(Agent):
         summary = ", ".join(f"{p['symbol']} {p['timeframe']} {p['strategy_name']}" + ("" if p["direction"] == "both" else f" (só {'compra' if p['direction'] == 'long' else 'venda'})") for p in plan) or "ficar de fora"
         if changed:
             self.log(f"Novo plano{' (IA)' if ai_used else ''}: {summary}. {rationale}", kind="decision")
-            short = ", ".join(f"{p['symbol']} {p['timeframe']}" for p in plan)
+            # mesmo par e tempo gráfico com estratégias diferentes: o nome da estratégia evita parecer repetido
+            pairs = Counter(f"{p['symbol']} {p['timeframe']}" for p in plan)
+            short = ", ".join(f"{p['symbol']} {p['timeframe']}" + (f" ({p['strategy_name']})" if pairs[f"{p['symbol']} {p['timeframe']}"] > 1 else "") for p in plan)
             self.tell("all", "📋 " + (self.line("plan_new", summary=short) if plan else self.line("plan_empty")), kind="info", data={"plan": [p["profile_id"] for p in plan]})
         self.idle("Acompanhando o plano")
 

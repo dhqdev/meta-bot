@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { AGENT_COLORS, AGENT_NAMES, Avatar, Badge, Bar, Button, Card, Empty, Loading, Modal } from "../components/ui";
+import { AGENT_COLORS, AGENT_NAMES, Avatar, Badge, Bar, Button, Card, Empty, ErrorBox, Loading, Modal } from "../components/ui";
 import { api } from "../lib/api";
+import { act } from "../lib/notify";
 import { ago, dateTime } from "../lib/format";
 
 const JOB_LABELS: Record<string, string> = {
@@ -29,8 +30,10 @@ export function AgentsPage() {
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<any[]>("/api/agents"), refetchInterval: 15000 });
   const lessons = useQuery({ queryKey: ["lessons"], queryFn: () => api.get<any[]>("/api/lessons") });
   const [open, setOpen] = useState<string | null>(null);
+  const [running, setRunning] = useState<string | null>(null);
   const qc = useQueryClient();
   if (agents.isLoading) return <Loading />;
+  if (agents.error) return <ErrorBox error={agents.error} />;
   return (
     <div className="space-y-4">
       <div>
@@ -53,7 +56,7 @@ export function AgentsPage() {
                   </div>
                   <div className="mt-1 flex flex-wrap gap-1">
                     {a.uses_ai ? <Badge tone="green">IA</Badge> : <Badge>sem IA</Badge>}
-                    <Badge tone="gold">nível médio {a.level}</Badge>
+                    <Badge tone="gold" title="Média dos níveis das skills do agente">nível {a.level}</Badge>
                   </div>
                   {a.persona?.title && <p className="mt-1 text-xs italic text-slate-300">{a.persona.title}</p>}
                 </div>
@@ -97,8 +100,11 @@ export function AgentsPage() {
                     key={j}
                     variant="ghost"
                     className="text-xs"
+                    loading={running === `${a.id}:${j}`}
                     onClick={async () => {
-                      await api.post(`/api/agents/${a.id}/run?job=${j}`);
+                      setRunning(`${a.id}:${j}`);
+                      await act(() => api.post(`/api/agents/${a.id}/run?job=${j}`), `${a.name} começou: ${JOB_LABELS[j] ?? j}.`);
+                      setRunning(null);
                       setTimeout(() => void qc.invalidateQueries({ queryKey: ["agents"] }), 1500);
                     }}
                   >
@@ -127,7 +133,8 @@ export function AgentsPage() {
                 className="rounded p-1 text-muted hover:bg-panel2 hover:text-down"
                 title="Desativar lição"
                 onClick={async () => {
-                  await api.del(`/api/lessons/${l.id}`);
+                  if (!confirm("Desativar esta lição? A equipe deixa de segui-la.")) return;
+                  await act(() => api.del(`/api/lessons/${l.id}`), "Lição desativada.");
                   void lessons.refetch();
                 }}
               >

@@ -6,7 +6,7 @@ import { Link } from "react-router";
 import { TranscriptLine, agentName } from "../components/Chat";
 import { AGENT_COLORS, Avatar, Badge, Button, Card, Empty, ErrorBox, Loading, Stat } from "../components/ui";
 import { api } from "../lib/api";
-import { currencySymbol, dateTime, EXIT_LABEL, num, pct, signed } from "../lib/format";
+import { dateTime, EXIT_LABEL, num, pct, saoPauloHour, signed, signedCash } from "../lib/format";
 import { onLiveEvent, useLive } from "../lib/live";
 
 interface ReportSummary {
@@ -69,14 +69,14 @@ export function DailyPage() {
   useEffect(
     () =>
       onLiveEvent((ev) => {
-        if (ev.type === "daily") {
-          void qc.invalidateQueries({ queryKey: ["daily"] });
-          setDay(ev.day);
-        }
+        // atualiza a lista; quem está lendo outro dia continua nele
+        if (ev.type === "daily") void qc.invalidateQueries({ queryKey: ["daily"] });
       }),
     [qc],
   );
 
+  const [hh, mm] = (list.data?.time ?? "19:00").split(":").map(Number);
+  const preview = saoPauloHour() < hh + mm / 60; // antes do horário o botão faz só uma prévia
   const runNow = async () => {
     setBusy(true);
     setError(null);
@@ -102,8 +102,9 @@ export function DailyPage() {
         </div>
         <div className="flex flex-col items-end gap-1.5">
           <Button onClick={runNow} loading={busy || list.data?.running}>
-            <Play className="h-4 w-4" /> {list.data?.running ? "Reunião em andamento…" : "Fazer a daily agora"}
+            <Play className="h-4 w-4" /> {list.data?.running ? "Reunião em andamento…" : preview ? "Fazer uma prévia agora" : "Fazer a daily agora"}
           </Button>
+          {preview && <span className="max-w-xs text-right text-[11px] text-muted">Antes das {list.data?.time ?? "19:00"} é só uma prévia: mostra como está o dia sem mudar nada para amanhã. A daily oficial continua no horário.</span>}
           <span className="flex items-center gap-1 text-[11px] text-muted">
             <CalendarClock className="h-3.5 w-3.5" />
             {list.data?.enabled === false ? (
@@ -173,7 +174,7 @@ function ReportDetail({ day }: { day: string }) {
   const r = q.data!;
   const m = r.metrics || {};
   const totals = m.totals || {};
-  const cur = m.currency ? ` ${currencySymbol(m.currency)}` : "";
+  const cur: string = m.currency || "";
   const role = (id: string) => live.agents[id]?.role;
   return (
     <div className="min-w-0 space-y-4">
@@ -182,6 +183,7 @@ function ReportDetail({ day }: { day: string }) {
           <ClipboardList className="h-5 w-5 text-gold" />
           <h2 className="text-lg font-semibold">Daily · {dayLabel(r.day, true)}</h2>
           <Badge tone={STATUS[r.status]?.tone ?? "slate"}>{STATUS[r.status]?.label ?? r.status}</Badge>
+          {m.preview && <Badge tone="gold" title="Feita pelo botão antes do horário: não mudou nada para amanhã">prévia</Badge>}
           <Badge tone={r.mode === "live" ? "gold" : "blue"}>{r.mode === "live" ? "conta MT5" : "simulado"}</Badge>
           <Badge tone={r.ai ? "purple" : "slate"} className="ml-auto">
             {r.ai ? "falas pela IA" : "sem IA (regras)"}
@@ -194,7 +196,7 @@ function ReportDetail({ day }: { day: string }) {
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <Stat label="Resultado" value={`${signed(r.pnl)}${cur}`} tone={r.pnl > 0 ? "up" : r.pnl < 0 ? "down" : undefined} hint={totals.r != null ? `${signed(totals.r)}R no dia` : undefined} />
+        <Stat label="Resultado" value={signedCash(r.pnl, cur)} tone={r.pnl > 0 ? "up" : r.pnl < 0 ? "down" : undefined} hint={totals.r != null ? `${signed(totals.r)}R no dia` : undefined} />
         <Stat label="Operações" value={r.trades} hint={`${r.wins} ganhos · ${totals.losses ?? r.trades - r.wins} perdas`} />
         <Stat label="Acerto" value={pct(totals.win_rate)} hint={m.signals ? `${m.signals.total} sinais no dia` : undefined} />
         <Stat label="Custo de IA" value={`US$ ${num(m.ai_cost_usd ?? 0, 3)}`} hint="no dia inteiro" />
@@ -317,7 +319,7 @@ function HorizonCard({ today, horizons, currency }: { today: any[]; horizons: an
               <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
                 <span className="text-muted">hoje</span>
                 <span className={clsx("text-right tabular-nums", (t?.pnl ?? 0) > 0 ? "text-up" : (t?.pnl ?? 0) < 0 ? "text-down" : "")}>
-                  {t ? `${t.n} op. · ${signed(t.pnl)}${currency}` : "—"}
+                  {t ? `${t.n} op. · ${signedCash(t.pnl, currency)}` : "—"}
                 </span>
                 {h.live_trades != null && (
                   <>
@@ -360,8 +362,7 @@ function Numbers({ metrics, currency }: { metrics: Record<string, any>; currency
               <div key={g.key} className="flex justify-between gap-2 border-b border-line/50 py-1 text-xs">
                 <span className="truncate">{fmt(g.key)}</span>
                 <span className={clsx("tabular-nums", g.pnl > 0 ? "text-up" : g.pnl < 0 ? "text-down" : "")}>
-                  {g.n} op · {signed(g.pnl)}
-                  {currency}
+                  {g.n} op · {signedCash(g.pnl, currency)}
                 </span>
               </div>
             ))}

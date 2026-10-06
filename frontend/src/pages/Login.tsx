@@ -4,7 +4,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 
 export function LoginPage() {
-  const { status, refresh } = useAuth();
+  const { status, refresh, offline } = useAuth();
   const setup = !!status?.needs_setup;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,6 +59,7 @@ export function LoginPage() {
             <Input inputMode="numeric" autoFocus value={code} onChange={(e) => setCode(e.target.value)} />
           </Field>
         )}
+        {offline && !status && <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">O servidor não respondeu. Confira se o backend está no ar e tente de novo.</div>}
         <ErrorBox error={error} />
         <Button type="submit" loading={busy} className="w-full">
           {setup ? "Criar conta e entrar" : "Entrar"}

@@ -97,7 +97,7 @@ export function OfficePage() {
                     </span>
                     <span className="ml-auto tabular-nums">{t.volume} lote(s)</span>
                     <span className={clsx("font-semibold tabular-nums", (t.open_pnl ?? 0) >= 0 ? "text-up" : "text-down")}>
-                      {signed(t.open_pnl)} ({signed(t.open_r)}R)
+                      {t.open_pnl == null ? "sem cotação" : signedCash(t.open_pnl, acc.currency || risk.currency)} ({signed(t.open_r)}R)
                     </span>
                     {t.mgmt?.last_review && <ReviewNote review={t.mgmt.last_review} />}
                   </div>
@@ -425,7 +425,7 @@ function AgentPanel({ id, onPick }: { id?: string; onPick: (id: string) => void 
           </div>
           {persona?.title && <div className="text-xs italic text-slate-300">{persona.title}</div>}
           <div className="mt-1 flex flex-wrap gap-1">
-            {a?.uses_ai ? <Badge tone="green">usa IA</Badge> : <Badge>sem IA</Badge>}
+            {a?.uses_ai ? live.system.ai ? <Badge tone="green">usa IA</Badge> : <Badge title="Sem chave do OpenRouter ou IA desligada: segue só com as regras">IA desligada</Badge> : <Badge>sem IA</Badge>}
             <Badge tone={a?.state === "working" ? "gold" : a?.state === "alert" || a?.state === "error" ? "red" : "slate"}>{STATE_LABEL[a?.state ?? ""] ?? a?.state}</Badge>
           </div>
         </div>
@@ -482,6 +482,7 @@ function AgentPanel({ id, onPick }: { id?: string; onPick: (id: string) => void 
       </div>
       <div>
         <h3 className="mb-2 font-pixel text-[9px] text-gold">ÚLTIMAS AÇÕES</h3>
+        {d && !d.activity?.length && <p className="text-xs text-muted">Nada registrado ainda.</p>}
         {(d?.activity || []).slice(0, 10).map((x: any, i: number) => (
           <div key={i} className="border-b border-line/60 py-1.5 text-xs">
             <span className="text-muted">{time(x.ts)}</span> {x.text}

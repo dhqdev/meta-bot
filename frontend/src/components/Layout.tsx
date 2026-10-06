@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { act } from "../lib/notify";
 import { signedCash } from "../lib/format";
 import { patchSystem, useLive } from "../lib/live";
 import { Badge } from "./ui";
@@ -31,6 +32,7 @@ export function DayGoalChip() {
 
 export function StatusChips() {
   const { system, connected } = useLive();
+  const { offline } = useAuth();
   const mt5 = system.mt5 || {};
   const mt5Tone = mt5.connected ? "green" : mt5.configured ? "red" : "slate";
   const mt5Label = mt5.connected ? `MT5 ${mt5.server || "conectado"}` : mt5.configured ? "MT5 fora do ar" : "sem MT5";
@@ -46,7 +48,7 @@ export function StatusChips() {
       <Badge tone={system.ai ? "green" : "slate"}>
         <Bot className="h-3 w-3" /> {system.ai ? "IA ligada" : "sem IA"}
       </Badge>
-      {!connected && <Badge tone="red">reconectando…</Badge>}
+      {!connected && <Badge tone="red">{offline ? "servidor fora do ar" : "reconectando…"}</Badge>}
     </div>
   );
 }
@@ -61,13 +63,16 @@ export function PowerButton({ compact }: { compact?: boolean }) {
       disabled={busy}
       onClick={async () => {
         setBusy(true);
-        try {
-          const res = await api.post<{ running: boolean }>("/api/system/running", { running: !running });
-          patchSystem({ running: res.running });
-          void qc.invalidateQueries();
-        } finally {
-          setBusy(false);
-        }
+        await act(
+          async () => {
+            const res = await api.post<{ running: boolean }>("/api/system/running", { running: !running });
+            patchSystem({ running: res.running });
+            void qc.invalidateQueries();
+            return res;
+          },
+          (res) => (res.running ? "Escritório aberto: a equipe começou a trabalhar." : "Escritório fechado: sem novas entradas (as abertas continuam protegidas)."),
+        );
+        setBusy(false);
       }}
       className={clsx(
         "flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 font-pixel text-[9px] uppercase transition disabled:opacity-60",

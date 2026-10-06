@@ -1,6 +1,7 @@
 // Conexão em tempo real com o escritório (WebSocket /ws) + store simples.
 import { useSyncExternalStore } from "react";
 import type { AgentView } from "../office/engine";
+import { UNAUTHORIZED_EVENT } from "./api";
 
 export interface ActivityItem {
   id?: number | null;
@@ -94,7 +95,9 @@ function connect() {
   if (stopped) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws`);
+  let opened = false;
   ws.onopen = () => {
+    opened = true;
     retry = 0;
     set({ connected: true });
   };
@@ -105,9 +108,16 @@ function connect() {
       /* mensagem inválida: ignora */
     }
   };
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
     set({ connected: false });
     ws = null;
+    // recusado logo na entrada (o navegador não mostra o motivo): confere a sessão; se ela acabou, vai para o login
+    if (!opened && retry >= 1) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    if (ev.code === 4401) {
+      // sessão encerrada: não adianta reconectar; o app confere a sessão e volta para o login
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      return;
+    }
     if (!stopped) setTimeout(connect, Math.min(15000, 1000 * 2 ** retry++));
   };
 }
@@ -121,6 +131,9 @@ export function startLive() {
 export function stopLive() {
   stopped = true;
   ws?.close();
+  // o próximo login começa limpo (sem conversas e números da sessão anterior)
+  state = { connected: false, agents: {}, system: {}, office: {}, activity: [], messages: [] };
+  listeners.forEach((l) => l());
 }
 
 export function patchSystem(patch: LiveState["system"]) {
