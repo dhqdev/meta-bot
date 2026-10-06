@@ -79,9 +79,9 @@ try {
 
   // Daily: botão para fazer a reunião agora e relatório gerado
   await page.click('header a[href="/daily"]');
-  await page.getByRole("button", { name: /Fazer a daily agora/ }).click();
+  await page.getByRole("button", { name: /Fazer (a daily|uma prévia) agora/ }).click();
   const dailyOk = await page
-    .getByText("Ajustes para amanhã")
+    .getByText(/Ajustes (para amanhã|sugeridos)/)
     .first()
     .waitFor({ timeout: 30000 })
     .then(() => true)

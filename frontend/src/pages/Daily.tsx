@@ -125,7 +125,7 @@ export function DailyPage() {
         <Loading />
       ) : reports.length === 0 ? (
         <Empty>
-          Ainda não houve daily. Ela acontece sozinha às {list.data?.time ?? "19:00"} quando o escritório trabalhou no dia — ou toque em <b>Fazer a daily agora</b> para ver como fica.
+          Ainda não houve daily. Ela acontece sozinha às {list.data?.time ?? "19:00"} quando o escritório trabalhou no dia — ou toque no botão acima para ver como fica.
         </Empty>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
@@ -226,7 +226,7 @@ function ReportDetail({ day }: { day: string }) {
             )}
             <p className="mt-3 text-[11px] text-muted">O Gustavo lembra a equipe desse foco na manhã seguinte (aparece na conversa do escritório).</p>
           </Card>
-          <Card title={<span className="flex items-center gap-1.5"><Wrench className="h-3.5 w-3.5" /> Ajustes para amanhã</span>}>
+          <Card title={<span className="flex items-center gap-1.5"><Wrench className="h-3.5 w-3.5" /> {m.preview ? "Ajustes sugeridos (ainda não aplicados)" : "Ajustes para amanhã"}</span>}>
             {r.adjustments.length === 0 ? (
               <p className="text-sm text-muted">Nenhum ajuste necessário: o dia ficou dentro do esperado.</p>
             ) : (
