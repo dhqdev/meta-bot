@@ -17,6 +17,20 @@ FF_CALENDAR_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
 # estratégias e operações giram só em torno deles. Na corretora o nome pode ter sufixo (EURUSDm).
 TRADING_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "USDCHF", "AUDUSD", "USDCAD", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP"]
 
+# Carteira diária (pesquisa de 06/10/2026 com preços reais): no forex intradiário nenhuma estratégia ganhou
+# depois dos custos; no gráfico diário de índices e ouro, tendência e compra de quedas tiveram vantagem.
+CARTEIRA_ATIVOS = ["US500", "NAS100", "US30", "GER40", "XAUUSD"]
+CARTEIRA_TIMEFRAMES = ["D1"]
+CARTEIRA_ESTRATEGIAS = [
+    "cruzamento_medias", "supertrend", "adx_dmi", "nrtr", "ichimoku_4regras", "squeeze_rompimento", "setup_91",
+    "price_action_engolfo", "donchian_turtle", "macd_histograma", "hilo_activator", "rsi2_compra", "virada_mes", "correcao_tendencia",
+]
+FOREX_TIMEFRAMES = ["M5", "M15", "H1", "H4"]
+MARKET_SETS = {
+    "carteira_diaria": {"label": "Carteira diária: índices e ouro (recomendado)", "symbols": CARTEIRA_ATIVOS},
+    "forex": {"label": "Forex: 10 pares (intradiário)", "symbols": TRADING_PAIRS},
+}
+
 
 class NewsFeed(BaseModel):
     name: str
@@ -39,12 +53,24 @@ DEFAULT_FEEDS = [
 ]
 OFF_PAIR_FEEDS = {f.url for f in DEFAULT_FEEDS if not f.enabled}
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 
 def pair_symbols(suffix: str = "") -> list[str]:
     """Os 10 pares com o sufixo da corretora (EURUSD + "m" = EURUSDm)."""
     return [p + suffix for p in TRADING_PAIRS]
+
+
+def market_symbols(market_set: str, suffix: str = "") -> list[str]:
+    """Ativos do conjunto escolhido com o sufixo da corretora."""
+    return [s + suffix for s in MARKET_SETS.get(market_set, MARKET_SETS["forex"])["symbols"]]
+
+
+def market_defaults(market_set: str, suffix: str = "") -> dict:
+    """O que muda junto ao trocar o conjunto de ativos: ativos, tempos gráficos e estratégias ligadas."""
+    if market_set == "carteira_diaria":
+        return {"market_set": market_set, "watchlist": market_symbols(market_set, suffix), "timeframes": list(CARTEIRA_TIMEFRAMES), "enabled_strategies": list(CARTEIRA_ESTRATEGIAS)}
+    return {"market_set": "forex", "watchlist": pair_symbols(suffix), "timeframes": list(FOREX_TIMEFRAMES), "enabled_strategies": []}
 
 
 class RuntimeConfig(BaseModel):
@@ -56,12 +82,13 @@ class RuntimeConfig(BaseModel):
     # auto = MT5 quando conectado; senão, preços reais públicos (Yahoo/Binance); sem internet, o simulado
     data_source: Literal["auto", "mt5", "real", "synthetic"] = "auto"
 
-    # --- Ativos: os 10 pares fixos (a tela só muda o sufixo da corretora)
-    watchlist: list[str] = Field(default_factory=pair_symbols)
+    # --- Ativos: um conjunto fixo (a tela escolhe o conjunto e o sufixo da corretora)
+    market_set: Literal["forex", "carteira_diaria"] = "carteira_diaria"
+    watchlist: list[str] = Field(default_factory=lambda: list(CARTEIRA_ATIVOS))
     symbol_suffix: str = Field("", max_length=12)
     # M5 = operações curtas (scalper); M15/H1 = day trade; H4 = posições mais longas
-    timeframes: list[str] = Field(default_factory=lambda: ["M5", "M15", "H1", "H4"])
-    enabled_strategies: list[str] = Field(default_factory=list)  # vazio = todas
+    timeframes: list[str] = Field(default_factory=lambda: list(CARTEIRA_TIMEFRAMES))
+    enabled_strategies: list[str] = Field(default_factory=lambda: list(CARTEIRA_ESTRATEGIAS))  # vazio = todas
 
     # --- Conta simulada
     # moeda da conta simulada: saldo, comissão, metas em valor e resultado (no modo real vale a moeda da conta do MT5)
@@ -272,6 +299,11 @@ def _migrate(stored: dict) -> dict:
         # sem nenhum sinal. Quem estava no padrão antigo (3) passa para o novo (6).
         if stored.get("max_active_setups") in (None, 3):
             stored["max_active_setups"] = 6
+        stored["config_version"] = 4
+    if int(stored.get("config_version") or 1) < 5:
+        # v5: o dono escolheu a carteira diária (06/10/2026): o forex intradiário perdeu em todos os testes
+        # com preços reais. Troca ativos, tempo gráfico e estratégias; risco, modo e limites ficam como estavam.
+        stored.update(market_defaults("carteira_diaria", str(stored.get("symbol_suffix") or "")))
         stored["config_version"] = CONFIG_VERSION
     for old in ("max_daily_loss_pct", "ai_provider", "ai_model", "ai_news_model", "ai_auditor_model", "openrouter_manager_model",
                 "openrouter_news_model", "openrouter_auditor_model", "openrouter_fallback_model"):

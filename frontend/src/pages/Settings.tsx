@@ -222,11 +222,17 @@ export function SettingsPage() {
     setSaving(true);
     try {
       const res = await api.put<any>("/api/settings", patch);
+      const before: any = (qc.getQueryData(["settings"]) as any)?.config ?? {};
       qc.setQueryData(["settings"], (old: any) => (old ? { ...old, config: res.config } : old));
       // a resposta pode normalizar o valor (ex.: 7:5 → 07:05); só troca o que não mudou enquanto salvava
       setDraft((d) => {
         const next = { ...(d ?? {}) };
         for (const k of Object.keys(patch)) if (JSON.stringify(next[k]) === JSON.stringify(patch[k])) next[k] = res.config[k];
+        // o servidor também pode mudar campos junto (trocar o conjunto de ativos troca tempos gráficos e estratégias)
+        for (const k of Object.keys(res.config)) {
+          if (k in patch || JSON.stringify(before[k]) === JSON.stringify(res.config[k])) continue;
+          if (JSON.stringify(next[k]) === JSON.stringify(before[k])) next[k] = res.config[k];
+        }
         return next;
       });
       setError(null);
@@ -283,7 +289,7 @@ export function SettingsPage() {
 
       <ModeCard />
       <GoalsCard cfg={cfg} set={set} setMany={setMany} defaults={defaults} />
-      <MarketsCard cfg={cfg} set={set} pairs={q.data.options?.pairs ?? []} />
+      <MarketsCard cfg={cfg} set={set} sets={q.data.options?.market_sets ?? []} />
       <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
         <DailyCard cfg={cfg} set={set} />
         <AICard cfg={cfg} set={set} ai={q.data.ai} />
@@ -576,14 +582,26 @@ const SIMPLE_FIELDS: Record<string, FieldDef> = {
   ai_max_calls_per_hour: { key: "ai_max_calls_per_hour", label: "Máximo de chamadas por hora", int: true, min: 0, max: 500, hint: "Segurança extra contra gasto inesperado." },
 };
 
-function MarketsCard({ cfg, set, pairs }: { cfg: Cfg; set: Setter; pairs: string[] }) {
+function MarketsCard({ cfg, set, sets }: { cfg: Cfg; set: Setter; sets: Array<{ key: string; label: string; symbols: string[] }> }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<any>("/api/strategies") });
+  const current = sets.find((m) => m.key === cfg.market_set);
   return (
     <Card title="O que a equipe opera">
       <div className="grid gap-4 lg:grid-cols-2">
-        <Field label="Os 10 pares da equipe" hint="Fixos: notícias, calendário, estratégias e operações giram só em torno deles. Nada mais, nada menos.">
+        <Field
+          label="Ativos da equipe"
+          hint="Na pesquisa com preços reais, o forex intradiário perdeu com todas as estratégias depois dos custos; o gráfico diário de índices e ouro teve vantagem. Trocar o conjunto troca junto os tempos gráficos e as estratégias ligadas."
+        >
+          <div className="mb-2 grid gap-1.5">
+            {sets.map((m) => (
+              <label key={m.key} className={clsx("flex cursor-pointer items-center gap-2 rounded-lg border px-2 py-1.5 text-sm", cfg.market_set === m.key ? "border-gold/60 bg-gold/10" : "border-line")}>
+                <input type="radio" name="market_set" checked={cfg.market_set === m.key} onChange={() => set("market_set", m.key)} />
+                {m.label}
+              </label>
+            ))}
+          </div>
           <div className="mb-3 flex flex-wrap gap-1.5">
-            {pairs.map((p) => (
+            {(current?.symbols ?? []).map((p) => (
               <Badge key={p} tone="blue" className="text-xs">
                 {p}
                 {cfg.symbol_suffix ? <span className="text-sky-200/70">{cfg.symbol_suffix}</span> : null}
@@ -591,7 +609,7 @@ function MarketsCard({ cfg, set, pairs }: { cfg: Cfg; set: Setter; pairs: string
             ))}
           </div>
           <div className="max-w-xs">
-            <Field label="Sufixo da corretora (se houver)" hint="Algumas corretoras chamam o EURUSD de EURUSDm, EURUSD.a… Coloque só o final (m, .a). Vazio = nome normal.">
+            <Field label="Sufixo da corretora (se houver)" hint="Algumas corretoras chamam o US500 de US500m, US500.a… Coloque só o final (m, .a). Vazio = nome normal.">
               <Input value={cfg.symbol_suffix ?? ""} placeholder="vazio" onChange={(e) => set("symbol_suffix", e.target.value.trim())} />
             </Field>
           </div>

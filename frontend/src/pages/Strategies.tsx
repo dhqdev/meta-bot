@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import { Dna, FlaskConical, Play, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { LineChart } from "../components/Charts";
 import { Badge, Button, Card, Empty, ErrorBox, Field, Loading, Modal, Select } from "../components/ui";
 import { api } from "../lib/api";
@@ -301,10 +301,15 @@ function Backtest() {
   const [sel, setSel] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  // os 10 pares fixos da equipe (com o sufixo da corretora, se houver)
+  // os ativos da equipe (já com o sufixo da corretora, se houver)
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<any>("/api/settings") });
-  const suffix: string = settings.data?.config?.symbol_suffix ?? "";
-  const pairs: string[] = (settings.data?.options?.pairs ?? ["EURUSD"]).map((p: string) => p + suffix);
+  const pairs: string[] = settings.data?.config?.watchlist?.length ? settings.data.config.watchlist : ["EURUSD"];
+  const teamTfs: string[] = settings.data?.config?.timeframes ?? [];
+  useEffect(() => {
+    if (pairs.length && !pairs.includes(symbol)) setSymbol(pairs[0]);
+    if (teamTfs.length && !teamTfs.includes(tf)) setTf(teamTfs[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.data]);
   const run = async () => {
     setBusy(true);
     setError(null);
@@ -325,7 +330,7 @@ function Backtest() {
     <div className="space-y-4">
       <Card title="Backtest sob demanda">
         <div className="grid gap-3 md:grid-cols-[1fr_140px_auto]">
-          <Field label="Par">
+          <Field label="Ativo">
             <Select value={pairs.includes(symbol) ? symbol : pairs[0]} onChange={setSymbol} options={pairs.map((p) => [p, p] as [string, string])} />
           </Field>
           <Field label="Tempo gráfico">

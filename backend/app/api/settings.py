@@ -17,7 +17,7 @@ from app.deps import current_user, get_office
 from app.events import record_activity
 from app.kv import secret_get, secret_set
 from app.models import Terminal, User
-from app.runtime import TIMEFRAMES, TRADING_PAIRS, RuntimeConfig, get_config, pair_symbols, update_config
+from app.runtime import MARKET_SETS, TIMEFRAMES, TRADING_PAIRS, RuntimeConfig, get_config, market_defaults, market_symbols, update_config
 from app.security import box, mask
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -87,7 +87,7 @@ def get_settings_view(user: User = Depends(current_user), office=Depends(get_off
     return {
         "config": cfg.model_dump(mode="json"),
         "defaults": RuntimeConfig().model_dump(mode="json"),
-        "options": {"timeframes": TIMEFRAMES, "pairs": TRADING_PAIRS},
+        "options": {"timeframes": TIMEFRAMES, "pairs": TRADING_PAIRS, "market_sets": [{"key": k, **v} for k, v in MARKET_SETS.items()]},
         "ai": {
             **office.llm.status(),
             "key_masked": mask(stored or env_key),
@@ -107,10 +107,14 @@ def put_settings(patch: dict[str, Any], user: User = Depends(current_user), offi
     if "watchlist" in patch:
         current = get_config()
         if patch["watchlist"] != current.watchlist:
-            raise HTTPException(status_code=400, detail="Ativos: a equipe trabalha só com os 10 pares fixos. Mude apenas o sufixo da corretora, se precisar.")
+            raise HTTPException(status_code=400, detail="Ativos: a equipe trabalha com um conjunto fixo. Troque o conjunto ou o sufixo da corretora.")
         patch.pop("watchlist")
+    if "market_set" in patch and patch["market_set"] != get_config().market_set:
+        # trocar o conjunto traz junto os tempos gráficos e as estratégias de cada um
+        suffix = str(patch.get("symbol_suffix", get_config().symbol_suffix) or "").strip()
+        patch = {**market_defaults(str(patch["market_set"]), suffix), **{k: v for k, v in patch.items() if k not in ("timeframes", "enabled_strategies")}}
     if "symbol_suffix" in patch:
-        patch["watchlist"] = pair_symbols(str(patch["symbol_suffix"] or "").strip())
+        patch["watchlist"] = market_symbols(str(patch.get("market_set") or get_config().market_set), str(patch["symbol_suffix"] or "").strip())
     try:
         cfg = update_config(patch)
     except ValidationError as exc:

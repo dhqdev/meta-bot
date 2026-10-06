@@ -72,14 +72,15 @@ def test_settings_validation_and_protected_fields(client):
     assert cfg["timeframes"] == ["H1", "D1"]
 
 
-def test_the_ten_pairs_are_fixed(client):
-    """Só os 10 pares: a tela não troca a lista, só o sufixo da corretora (EURUSDm)."""
+def test_the_assets_come_from_a_fixed_set(client):
+    """A tela não troca a lista de ativos: escolhe o conjunto (forex ou carteira diária) e o sufixo da corretora."""
     setup_owner(client)
     view = client.get("/api/settings").json()
     assert view["config"]["watchlist"] == TRADING_PAIRS and len(set(TRADING_PAIRS)) == 10
     assert view["options"]["pairs"] == TRADING_PAIRS
+    assert {s["key"] for s in view["options"]["market_sets"]} == {"forex", "carteira_diaria"}
     r = client.put("/api/settings", json={"watchlist": ["EURUSD", "BTCUSD"]})
-    assert r.status_code == 400 and "10 pares" in r.json()["detail"]
+    assert r.status_code == 400 and "conjunto fixo" in r.json()["detail"]
     r = client.put("/api/settings", json={"symbol_suffix": "m"})
     assert r.status_code == 200 and r.json()["config"]["watchlist"] == [p + "m" for p in TRADING_PAIRS]
     r = client.put("/api/settings", json={"symbol_suffix": "m m"})

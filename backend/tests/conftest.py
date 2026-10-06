@@ -30,7 +30,7 @@ if str(ROOT) not in sys.path:
 
 from app.config import get_settings  # noqa: E402
 from app.db import Base, configure, get_engine, init_db  # noqa: E402
-from app.runtime import reset_cache, update_config  # noqa: E402
+from app.runtime import market_defaults, reset_cache, update_config  # noqa: E402
 from app.security import SecretBox, set_secret_box  # noqa: E402
 
 set_secret_box(SecretBox(get_settings().secret_key))
@@ -50,7 +50,8 @@ def clean_db():
 
     forget_diagnostico()
     # as contas dos testes antigos são em dólar; a conta em reais tem testes próprios (test_currency.py)
-    update_config({"paper_currency": "USD"})
+    # os testes antigos são do forex (pares, M5 a H4); a carteira diária tem testes próprios (test_carteira.py)
+    update_config({"paper_currency": "USD", **market_defaults("forex")})
     yield
     reset_cache()
 

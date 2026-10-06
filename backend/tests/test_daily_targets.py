@@ -116,12 +116,13 @@ def test_old_config_is_migrated():
     reset_cache()
     cfg = get_config()
     assert cfg.daily_loss_limit == 4.5 and cfg.daily_loss_unit == "percent"
-    assert cfg.timeframes == ["M5", "H1", "H4"] and cfg.config_version == 4
+    # v5: a carteira diária substitui os tempos gráficos antigos
+    assert cfg.timeframes == ["D1"] and cfg.market_set == "carteira_diaria" and cfg.config_version == 5
 
 
-def test_v3_keeps_only_the_ten_pairs_with_the_broker_suffix():
+def test_old_watchlist_becomes_the_daily_portfolio_with_the_broker_suffix():
     from app.kv import kv_set
-    from app.runtime import TRADING_PAIRS, get_config, reset_cache
+    from app.runtime import CARTEIRA_ATIVOS, get_config, reset_cache
 
     feeds = [{"name": "CoinDesk", "url": "https://www.coindesk.com/arc/outboundfeeds/rss/", "enabled": True},
              {"name": "Minha fonte", "url": "https://exemplo.com/rss", "enabled": True}]
@@ -129,7 +130,7 @@ def test_v3_keeps_only_the_ten_pairs_with_the_broker_suffix():
                               "daily_loss_limit": 1.5, "daily_profit_target": 1})
     reset_cache()
     cfg = get_config()
-    assert cfg.watchlist == [p + "m" for p in TRADING_PAIRS] and cfg.symbol_suffix == "m"
+    assert cfg.watchlist == [p + "m" for p in CARTEIRA_ATIVOS] and cfg.symbol_suffix == "m"
     assert [f.enabled for f in cfg.news_feeds] == [False, True]
     assert (cfg.daily_loss_limit, cfg.daily_profit_target) == (1.5, 1)
 
@@ -141,7 +142,7 @@ def test_v4_watches_six_setups_unless_the_owner_chose_another_number():
     kv_set("runtime_config", {"config_version": 3, "max_active_setups": 3})
     reset_cache()
     cfg = get_config()
-    assert (cfg.max_active_setups, cfg.max_setups_per_symbol, cfg.config_version) == (6, 2, 4)
+    assert (cfg.max_active_setups, cfg.max_setups_per_symbol, cfg.config_version) == (6, 2, 5)
     kv_set("runtime_config", {"config_version": 3, "max_active_setups": 5})
     reset_cache()
     assert get_config().max_active_setups == 5

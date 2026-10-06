@@ -226,11 +226,12 @@ class ManagerAgent(Agent):
             horizon = prof.get("horizon") or "day"
             total *= hw.get(horizon, 1.0)
             blocked = []
-            if avoided(prof["symbol"]):
+            daily = prof["timeframe"] == "D1"  # setup diário: o sinal sai no fechamento do dia, a hora não importa
+            if not daily and avoided(prof["symbol"]):
                 blocked.append(f"hora evitada pela daily ({hour_now}h UTC)")
             if blackout:
                 blocked.append(f"evento {blackout['title']} ({blackout['currency']})")
-            if hour_q < cfg.min_hour_quality:
+            if not daily and hour_q < cfg.min_hour_quality:
                 blocked.append(f"hora fraca ({hour_q:.2f})")
             direction = "both"
             if cfg.use_news_filter and news_strength >= 0.35:
@@ -271,6 +272,10 @@ class ManagerAgent(Agent):
 
     def deterministic_plan(self, cands: list[dict]) -> list[dict]:
         cfg = get_config()
+        if cfg.market_set == "carteira_diaria":
+            # carteira diária: vigia todos os setups aprovados e livres (foi o que ganhou na simulação);
+            # quem limita a exposição é a Rita (uma posição por ativo e o teto de posições abertas)
+            return [self._setup(c, c["suggested_direction"], 1.0, "carteira diária: setup aprovado e livre") for c in cands if not c["blocked"]]
         plan: list[dict] = []
         per_symbol: Counter[str] = Counter()
         for c in cands:
@@ -402,7 +407,7 @@ class ManagerAgent(Agent):
         model = ""
         plan = None
         rationale = ""
-        if self.office.llm.available():
+        if self.office.llm.available() and cfg.market_set != "carteira_diaria":  # na carteira diária o plano é por regra
             reused = self._reuse_ai_plan(cands)
             if reused is not None:
                 plan, rationale, model = reused

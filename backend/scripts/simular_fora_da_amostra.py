@@ -57,19 +57,16 @@ def plan_with(cands: list[dict], limit: int, per_symbol: int, min_score: float) 
     return out
 
 
+EQUIPE = "equipe (plano real + Rita: 1 por ativo)"
 POLICIES = {
     "atual (6 setups, 2 por par)": lambda cands: plan_with(cands, 6, 2, 0.45),
     "aberto (10 setups, 3 por par)": lambda cands: plan_with(cands, 10, 3, 0.45),
     "mais aberto (10, 3 por par, nota 0,35)": lambda cands: plan_with(cands, 10, 3, 0.35),
     "todas as livres": lambda cands: [c for c in cands if not c["blocked"]],
+    EQUIPE: None,  # manager.deterministic_plan + uma posição por ativo e o teto de posições abertas da Rita
 }
 
 
-CARTEIRA_ATIVOS = ["US500", "NAS100", "US30", "GER40", "XAUUSD"]
-CARTEIRA_ESTRATEGIAS = [
-    "cruzamento_medias", "supertrend", "adx_dmi", "nrtr", "ichimoku_4regras", "squeeze_rompimento", "setup_91",
-    "price_action_engolfo", "donchian_turtle", "macd_histograma", "hilo_activator", "rsi2_compra", "virada_mes", "correcao_tendencia",
-]
 
 
 def drawdown(values: list[float]) -> float:
@@ -86,7 +83,7 @@ async def main() -> int:
     parser.add_argument("--dia", default="", help="último dia, AAAA-MM-DD (padrão: ontem em Brasília)")
     parser.add_argument("--dias", type=int, default=60, help="quantos dias úteis simular, voltando a partir de --dia")
     parser.add_argument("--blocos", type=int, default=3, help="em quantos blocos a Estela refaz o ranking")
-    parser.add_argument("--carteira", action="store_true", help="índices e ouro no gráfico diário, com as estratégias da carteira")
+    parser.add_argument("--carteira", action="store_true", help="carteira diária (índices e ouro no D1); sem ela, os 10 pares de forex")
     parser.add_argument("--proposta", action="store_true", help="aprovação com 15+ operações fora da amostra e ranking por expectativa")
     args = parser.parse_args()
     if args.proposta:
@@ -125,10 +122,9 @@ async def main() -> int:
         from app.runtime import update_config
 
         update_config({"rank_by": "expectancy"})
-    if args.carteira:
-        from app.runtime import update_config
+    from app.runtime import market_defaults, update_config
 
-        update_config({"watchlist": CARTEIRA_ATIVOS, "timeframes": ["D1"], "enabled_strategies": CARTEIRA_ESTRATEGIAS})
+    update_config(market_defaults("carteira_diaria" if args.carteira else "forex"))
     cfg = get_config()
     strategist = office.agent("strategist")
     schedule = office.agent("schedule")
@@ -151,7 +147,8 @@ async def main() -> int:
 
     line(f"== {len(days)} dias úteis (Brasília) de {days[0]:%d/%m} a {days[-1]:%d/%m}, em {len(blocks)} blocos ==")
     line(f"   origem dos preços: {office.market.source()} · pares: {', '.join(cfg.watchlist)} · tempos gráficos: {', '.join(cfg.timeframes)}")
-    line(f"   ranking por {cfg.rank_by} · risco por operação {cfg.risk_per_trade_pct}% do patrimônio (1R)")
+    line(f"   ranking por {cfg.rank_by} · risco por operação {cfg.risk_per_trade_pct}% do patrimônio (1R) · até {cfg.max_open_positions} posições abertas")
+    open_until: dict[str, int] = {}  # política "equipe": ativo → fim da posição aberta
 
     results: dict[str, dict[date, list[float]]] = {name: {day: [] for day in days} for name in POLICIES}
     signals_seen: dict[str, int] = Counter()
@@ -171,7 +168,7 @@ async def main() -> int:
         cut["ts"] = None
 
         # entradas que o backtest faria em cada setup aprovado durante o bloco (preços de verdade, depois do corte)
-        trades_by_profile: dict[int, list[tuple[int, float]]] = {}
+        trades_by_profile: dict[int, list[tuple[int, float, int]]] = {}
         for p in approved:
             strat = get_strategy(p["strategy"])
             tf_sec = TIMEFRAME_SECONDS[p["timeframe"]]
@@ -191,7 +188,7 @@ async def main() -> int:
                     continue
                 signal_close = int(bars.time[i - 1]) + tf_sec  # o sinal fecha no candle anterior à entrada
                 if start.timestamp() <= signal_close < end.timestamp():
-                    out.append((signal_close, t.r))
+                    out.append((signal_close, t.r, int(t.exit_time)))
             trades_by_profile[p["id"]] = out
 
         for day in block:
@@ -212,13 +209,24 @@ async def main() -> int:
                 for c in cands:
                     for why in c["blocked"]:
                         blocked_why[why.split(" (")[0]] += 1
+                by_id = {c["profile_id"]: c for c in cands}
                 for name, rule in POLICIES.items():
-                    ids = {c["profile_id"] for c in rule(cands)}
+                    if rule is None:
+                        ids = [p["profile_id"] for p in manager.deterministic_plan(cands)]
+                    else:
+                        ids = [c["profile_id"] for c in rule(cands)]
                     for pid in ids:
-                        for ts, r in trades_by_profile.get(pid, []):
-                            if at.timestamp() <= ts < at.timestamp() + 3600:
-                                results[name][day].append(r)
-                                signals_seen[name] += 1
+                        for ts, r, exit_ts in trades_by_profile.get(pid, []):
+                            if not (at.timestamp() <= ts < at.timestamp() + 3600):
+                                continue
+                            if rule is None:
+                                symbol = by_id[pid]["symbol"]
+                                busy = {s for s, until in open_until.items() if until > ts}
+                                if symbol in busy or len(busy) >= cfg.max_open_positions:
+                                    continue
+                                open_until[symbol] = exit_ts
+                            results[name][day].append(r)
+                            signals_seen[name] += 1
         schedule.hour_quality = real_hour
 
         for name in POLICIES:
