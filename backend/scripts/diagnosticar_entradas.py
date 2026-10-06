@@ -69,7 +69,12 @@ async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dia", default="", help="último dia, AAAA-MM-DD (padrão: ontem em Brasília)")
     parser.add_argument("--dias", type=int, default=1, help="quantos dias úteis analisar, voltando a partir de --dia")
+    parser.add_argument("--proposta", action="store_true", help="simula a proposta: 15+ operações fora da amostra e ranking por expectativa")
     args = parser.parse_args()
+    if args.proposta:
+        from app.core import metrics
+
+        metrics.ApprovalRules.min_oos_trades = property(lambda self: max(15, int(self.min_trades * self.oos_fraction * 0.6)))
     last = date.fromisoformat(args.dia) if args.dia else (datetime.now(BRT).date() - timedelta(days=1))
     days: list[date] = []
     d = last
@@ -100,11 +105,16 @@ async def main() -> int:
 
     office = Office(settings)
     office.ensure_setup()
+    if args.proposta:
+        from app.runtime import update_config
+
+        update_config({"rank_by": "expectancy"})
     cfg = get_config()
     strategist = office.agent("strategist")
     schedule = office.agent("schedule")
     manager = office.agent("manager")
 
+    line(f"== Regras: {'PROPOSTA (15+ fora da amostra, ranking por expectativa)' if args.proposta else 'ATUAIS'} · risco por operação {cfg.risk_per_trade_pct}% ==")
     line(f"== Dias analisados (Brasília): {', '.join(str(x) for x in days)} ==")
     line(f"   origem dos preços: {office.market.source()} · pares: {', '.join(cfg.watchlist)} · tempos gráficos: {', '.join(cfg.timeframes)}")
     t0 = time.time()
@@ -162,6 +172,8 @@ async def main() -> int:
     real_hour = schedule.hour_quality
     hits: dict[str, list] = {name: [] for name in POLICIES}
     per_day: dict[str, Counter] = {name: Counter() for name in POLICIES}
+    per_day_r: dict[str, Counter] = {name: Counter() for name in POLICIES}
+    per_day_n: dict[str, Counter] = {name: Counter() for name in POLICIES}
     for day in days:
         start = windows[day][0]
         for h in range(24):
@@ -183,13 +195,15 @@ async def main() -> int:
                 got = [s for pid, lst in signals.items() if pid in ids for s in lst if at.timestamp() <= s[0] < at.timestamp() + 3600]
                 hits[name] += got
                 per_day[name][day] += len(got)
+                per_day_n[name][day] += sum(1 for s in got if s[2] is not None)
+                per_day_r[name][day] += sum(s[2] for s in got if s[2] is not None)
 
     line("")
     line("== Regras de plano comparadas (sinais que o plano estaria vigiando) ==")
     for name in POLICIES:
         known = [r for _, _, r in hits[name] if r is not None]
         wins = sum(1 for r in known if r > 0)
-        by_day = " ".join(f"{d:%d/%m}:{per_day[name][d]}" for d in days)
+        by_day = " ".join(f"{d:%d/%m}:{per_day[name][d]}s/{per_day_n[name][d]}op/{per_day_r[name][d]:+.2f}R" for d in days)
         line(
             f"   {name:40s} sinais {len(hits[name]):3d} · operações {len(known):3d} · acerto {wins / len(known) if known else 0:.0%} · "
             f"soma {sum(known):+.2f}R · por dia {by_day}"
