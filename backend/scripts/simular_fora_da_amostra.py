@@ -79,7 +79,12 @@ async def main() -> int:
     parser.add_argument("--dia", default="", help="último dia, AAAA-MM-DD (padrão: ontem em Brasília)")
     parser.add_argument("--dias", type=int, default=60, help="quantos dias úteis simular, voltando a partir de --dia")
     parser.add_argument("--blocos", type=int, default=3, help="em quantos blocos a Estela refaz o ranking")
+    parser.add_argument("--proposta", action="store_true", help="aprovação com 15+ operações fora da amostra e ranking por expectativa")
     args = parser.parse_args()
+    if args.proposta:
+        from app.core import metrics
+
+        metrics.ApprovalRules.min_oos_trades = property(lambda self: max(15, int(self.min_trades * self.oos_fraction * 0.6)))
     last = date.fromisoformat(args.dia) if args.dia else (datetime.now(BRT).date() - timedelta(days=1))
     days: list[date] = []
     d = last
@@ -108,6 +113,10 @@ async def main() -> int:
 
     office = Office(settings)
     office.ensure_setup()
+    if args.proposta:
+        from app.runtime import update_config
+
+        update_config({"rank_by": "expectancy"})
     cfg = get_config()
     strategist = office.agent("strategist")
     schedule = office.agent("schedule")

@@ -17,6 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         blocos: ["3", "12"]
+        regra: ["--proposta"]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -29,4 +30,4 @@ jobs:
         run: pip install -r requirements.txt
       - name: Simular
         working-directory: backend
-        run: python scripts/simular_fora_da_amostra.py --dia 2026-10-05 --dias 60 --blocos ${{ matrix.blocos }}
+        run: python scripts/simular_fora_da_amostra.py --dia 2026-10-05 --dias 60 --blocos ${{ matrix.blocos }} ${{ matrix.regra }}
