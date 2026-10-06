@@ -76,7 +76,7 @@ flowchart LR
     C --> A[Aurora<br/>auditoria e XP]
 ```
 
-1. A cada 15 minutos o **Gustavo** monta o plano com até 3 setups (ativo + tempo gráfico + estratégia + direção). Com IA, ele escolhe entre candidatos que as regras já filtraram; sem IA, usa a pontuação da equipe.
+1. A cada 15 minutos o **Gustavo** monta o plano com até 6 setups (ativo + tempo gráfico + estratégia + direção; até 2 por par), dando preferência aos que entram com mais frequência. Com IA, ele escolhe entre candidatos que as regras já filtraram; sem IA, usa a pontuação da equipe.
 2. Quando fecha um candle, a **Estela** confere os sinais dos setups do plano e manda para o Gustavo.
 3. O **Gustavo** revisa o sinal contra notícias e calendário e pede o lote à **Rita**; ela confere os limites e passa o lote ao **Caio**, que executa com stop e alvo.
 4. Com a posição aberta, o **Caio** cuida do básico a cada 5 segundos (stop, alvo, zero a zero, trailing e saída por tempo) e o **Gustavo** faz uma revisão de hora em hora (veja abaixo).

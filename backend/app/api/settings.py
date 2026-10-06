@@ -35,7 +35,7 @@ FIELD_LABELS = {
     "min_lot_overrisk": "Tolerância do lote mínimo", "rank_by": "Critério do ranking", "min_trades": "Mínimo de operações no teste",
     "min_profit_factor": "Fator de lucro mínimo", "oos_fraction": "Parte reservada para a prova", "ranking_interval_hours": "Refazer o ranking a cada",
     "evolution_interval_hours": "Evoluir a cada", "decision_interval_minutes": "Rever o plano a cada",
-    "max_active_setups": "Setups ativos ao mesmo tempo", "min_hour_quality": "Qualidade mínima do horário",
+    "max_active_setups": "Setups ativos ao mesmo tempo", "max_setups_per_symbol": "Setups por par", "min_hour_quality": "Qualidade mínima do horário",
     "news_block_threshold": "Força da notícia que veta", "break_even_r": "Zero a zero a partir de",
     "trailing_start_r": "Trailing a partir de", "trailing_atr_mult": "Distância do trailing", "max_bars_in_trade": "Tempo máximo na operação",
     "b3_close_time": "Fechar day trade da B3 às", "blackout_before_min": "Pausa antes do evento", "blackout_after_min": "Pausa depois do evento",

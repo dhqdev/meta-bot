@@ -111,7 +111,8 @@ const SECTIONS: Section[] = [
     title: "Gustavo · plano do dia",
     about: "Quem entra no plano e quando o gerente veta.",
     fields: [
-      { key: "max_active_setups", label: "Setups ativos ao mesmo tempo", int: true, min: 1, max: 10, hint: "Quantas combinações ativo + estratégia podem gerar entradas ao mesmo tempo (no máximo uma por ativo)." },
+      { key: "max_active_setups", label: "Setups ativos ao mesmo tempo", int: true, min: 1, max: 10, hint: "Quantas combinações ativo + tempo gráfico + estratégia o Gustavo vigia ao mesmo tempo. Vigiar mais aumenta a chance de entrar sem aumentar o risco: a Rita continua limitando as posições abertas (uma por par)." },
+      { key: "max_setups_per_symbol", label: "Setups por par", int: true, min: 1, max: 5, hint: "Quantos setups do mesmo par podem ficar no plano (em tempos gráficos ou estratégias diferentes). Mesmo assim só abre uma posição por par." },
       { key: "decision_interval_minutes", label: "Rever o plano a cada", int: true, min: 1, max: 240, suffix: "min", hint: "De quanto em quanto tempo o Gustavo reavalia quais setups ficam ativos." },
       { key: "position_review_minutes", label: "Revisar posições abertas a cada", int: true, min: 0, max: 720, suffix: "min", hint: "O Gustavo olha cada posição aberta com o mercado de agora: fecha se o motivo da entrada sumiu (evento forte chegando, notícia contra, operação parada ou devolvendo o lucro), aperta o stop para garantir lucro (nunca afrouxa) e estica ou aproxima o alvo. 0 = não revisa." },
       { key: "min_hour_quality", label: "Qualidade mínima do horário", min: 0, max: 1, hint: "O Hugo dá nota de 0 a 1 para cada hora de cada ativo (volume e movimento). Abaixo desta nota o setup fica bloqueado. 0 = opera em qualquer hora." },

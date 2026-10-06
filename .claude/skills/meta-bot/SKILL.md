@@ -70,6 +70,7 @@ O que muda no dia seguinte (provado em `tests/test_next_day.py`): hora evitada b
 # backend (venv com requirements-dev.txt)
 cd backend && python -m pytest -q                      # ~155 testes, SQLite temporário, sem rede
 cd backend && python scripts/verificar_sistema.py --minutos 5   # escritório com preços reais (precisa de internet)
+cd backend && python scripts/diagnosticar_entradas.py --dias 10   # "por que não entrou?": refaz dias passados com preços reais e compara o plano antigo com o atual
 MB_ADMIN_EMAIL=voce@exemplo.com MB_ADMIN_PASSWORD=UmaSenhaForte123 uvicorn app.main:app --reload
 
 # frontend (Node 22)
