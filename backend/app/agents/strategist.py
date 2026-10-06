@@ -572,7 +572,9 @@ class StrategistAgent(Agent):
             with session_scope() as s:
                 prof = s.get(StrategyProfile, profile_id) if profile_id else None
                 params = dict(prof.params or {}) if prof else {}
-            sigs = get_strategy(key).signals(bars, params)
+                filters = dict(prof.filters or {}) if prof else {}
+            # os mesmos filtros do backtest: a entrada contrária só vira saída quando passaria nos filtros
+            sigs = apply_filters(bars, get_strategy(key).signals(bars, params), filters)
             i = bars.n - 1
             is_long = direction == "buy"
             if (is_long and (sigs.long_exit[i] or sigs.short_entry[i])) or (not is_long and (sigs.short_exit[i] or sigs.long_entry[i])):

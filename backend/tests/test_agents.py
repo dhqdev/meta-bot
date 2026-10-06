@@ -188,3 +188,65 @@ def test_manager_learns_team_weights(office):
     assert after["strategy"] > before["strategy"]
     assert after["hour"] < before["hour"]
     assert abs(sum(after.values()) - 1) < 1e-6
+
+
+def _bars_after(entry_time: datetime, closes: list[float], start_offset_h: int = 0):
+    """Candles H1 começando no candle da entrada (fechados), com o fechamento pedido e amplitude pequena."""
+    import pandas as pd
+
+    from app.core.bars import Bars
+
+    base = int(entry_time.timestamp()) // 3600 * 3600 + start_offset_h * 3600
+    n = 30
+    first = closes[0]
+    cl = [first] * (n - len(closes)) + closes
+    times = [base - (n - len(closes)) * 3600 + i * 3600 for i in range(n)]
+    df = pd.DataFrame({"time": times, "open": cl, "high": [c + 50 for c in cl], "low": [c - 50 for c in cl], "close": cl, "spread": [0.0] * n})
+    return Bars(df, SYMBOL, "H1", 0.01)
+
+
+def test_break_even_waits_for_the_candle_close_like_the_backtest(office, running, monkeypatch):
+    """Zero a zero decide pelo fechamento do candle (como o backtest); um pico no meio do candle não mexe no stop."""
+    async def run():
+        update_config({"break_even_r": 1.0, "trailing_start_r": 0.0, "adaptive_exits": False})
+        pid = make_profile()
+        activate_plan(office, pid)
+        trade_id = await office.submit_signal(await new_signal(office, pid))
+        cashier = office.agent("cashier")
+        with session_scope() as s:
+            tr = s.get(Trade, trade_id)
+            entry, risk_px, entry_time = tr.entry_price, abs(tr.entry_price - tr.initial_sl), tr.entry_time
+        tick = await office.market.tick(SYMBOL)
+        spike = {**tick, "bid": entry + 1.5 * risk_px, "ask": entry + 1.5 * risk_px + 1}
+
+        async def fake_tick(symbol):
+            return spike
+
+        monkeypatch.setattr(office.market, "tick", fake_tick)
+        # 1) o candle da entrada ainda não fechou: o pico não move o stop
+        async def no_close_yet(*a, **k):
+            return _bars_after(entry_time, [entry], start_offset_h=-1)
+
+        monkeypatch.setattr(office.market, "rates", no_close_yet)
+        await cashier.monitor()
+        with session_scope() as s:
+            assert not (s.get(Trade, trade_id).mgmt or {}).get("be")
+        # 2) candle fechou abaixo de 1R: continua sem zero a zero, mesmo com o preço de agora acima
+        async def closed_below(*a, **k):
+            return _bars_after(entry_time, [entry + 0.5 * risk_px])
+
+        monkeypatch.setattr(office.market, "rates", closed_below)
+        await cashier.monitor()
+        with session_scope() as s:
+            assert not (s.get(Trade, trade_id).mgmt or {}).get("be")
+        # 3) candle fechou acima de 1R: stop vai para a entrada (sem somar o spread; comissão zero aqui)
+        async def closed_above(*a, **k):
+            return _bars_after(entry_time, [entry + 1.2 * risk_px])
+
+        monkeypatch.setattr(office.market, "rates", closed_above)
+        await cashier.monitor()
+        with session_scope() as s:
+            tr = s.get(Trade, trade_id)
+            assert tr.mgmt.get("be") and tr.sl == pytest.approx(entry, abs=0.01) and tr.status == "open"
+
+    asyncio.run(run())

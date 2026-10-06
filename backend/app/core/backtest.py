@@ -296,7 +296,8 @@ def simulate_exit(
                 sl = entry
             be_done = True
         if risk.trailing_start_r > 0 and fav >= risk.trailing_start_r * risk_px and np.isfinite(atr[i]):
-            trail = c[i] - direction * risk.trailing_atr * atr[i]
+            # igual ao backtest: na venda o stop móvel conta do ask (fechamento + spread)
+            trail = (c[i] - risk.trailing_atr * atr[i]) if direction > 0 else (c[i] + spread + risk.trailing_atr * atr[i])
             if (trail - sl) * direction > 0:
                 sl = trail
     last = min(end, bars.n) - 1

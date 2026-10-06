@@ -265,6 +265,28 @@ class CashierAgent(Agent):
             except Exception as exc:
                 self.log(f"Falha ao acompanhar a operação #{tr.id} ({tr.symbol}): {exc}", kind="order", level="warning")
 
+    async def _close_reference(self, tr: Trade, tick: dict, price: float) -> tuple[float | None, float]:
+        """Preço de referência do zero a zero e do stop móvel, igual ao backtest: o fechamento do último candle
+        (com o spread na venda), e o ATR desse candle. Um pico no meio do candle não mexe no stop.
+
+        Sem candle fechado depois da entrada: ainda não há o que ajustar (None). Sem candles (operação manual
+        ou dados fora do ar): usa o preço de agora, para a posição não ficar sem proteção."""
+        if not tr.timeframe:
+            return price, 0.0
+        try:
+            bars = await self.office.market.rates(tr.symbol, tr.timeframe, 100, closed_only=True, max_age=60)
+        except Exception:
+            return price, 0.0
+        if bars.n == 0:
+            return price, 0.0
+        entry = tr.entry_time if tr.entry_time.tzinfo else tr.entry_time.replace(tzinfo=timezone.utc)
+        if int(bars.time[-1]) + TIMEFRAME_SECONDS.get(tr.timeframe, 3600) <= int(entry.timestamp()):
+            return None, 0.0  # o candle da entrada ainda não fechou
+        spread = max(0.0, float(tick["ask"]) - float(tick["bid"]))
+        close = float(bars.close[-1]) + (spread if tr.direction == "sell" else 0.0)
+        atr = float(bars.atr(14)[-1])
+        return close, atr if atr == atr else 0.0  # NaN → 0
+
     async def _manage(self, tr: Trade) -> None:
         cfg = get_config()
         spec = await self.office.market.spec(tr.symbol)
@@ -289,27 +311,30 @@ class CashierAgent(Agent):
             return
         exits = self.office.exit_params()
         risk_px = abs(tr.entry_price - (tr.initial_sl or tr.entry_price))
-        fav = (price - tr.entry_price) * d
         mg = dict(tr.mgmt or {})
         new_sl = None
-        if risk_px > 0 and exits["break_even_r"] > 0 and not mg.get("be") and fav >= exits["break_even_r"] * risk_px:
-            buffer = (tick["ask"] - tick["bid"]) + tr.commission / max(value_per_price_unit(spec) * tr.volume, 1e-12)
-            cand = tr.entry_price + d * buffer
-            if tr.sl is None or (cand - tr.sl) * d > 0:
-                new_sl = cand
-            mg["be"] = True
-        if risk_px > 0 and exits["trailing_start_r"] > 0 and fav >= exits["trailing_start_r"] * risk_px and tr.timeframe:
-            try:
-                bars = await self.office.market.rates(tr.symbol, tr.timeframe, 100, closed_only=True, max_age=60)
-                atr = float(bars.atr(14)[-1])
-            except Exception:
-                atr = 0.0
-            if atr > 0:
-                cand = price - d * exits["trailing_atr"] * atr
-                ref = new_sl if new_sl is not None else tr.sl
-                if ref is None or (cand - ref) * d > 0:
-                    new_sl = cand
-                    mg["trailing"] = True
+        if risk_px > 0 and (exits["break_even_r"] > 0 or exits["trailing_start_r"] > 0):
+            ref, atr = await self._close_reference(tr, tick, price)
+            if ref is not None:
+                fav = (ref - tr.entry_price) * d
+                # zero a zero de verdade: na saída o preço já é o do lado certo (bid na compra, ask na venda);
+                # a folga cobre só a comissão (somar o spread de novo travava lucro e fazia sair por ruído)
+                if exits["break_even_r"] > 0 and not mg.get("be") and fav >= exits["break_even_r"] * risk_px:
+                    buffer = tr.commission / max(value_per_price_unit(spec) * tr.volume, 1e-12)
+                    cand = tr.entry_price + d * buffer
+                    if tr.sl is None or (cand - tr.sl) * d > 0:
+                        new_sl = cand
+                    mg["be"] = True
+                if exits["trailing_start_r"] > 0 and fav >= exits["trailing_start_r"] * risk_px and atr > 0:
+                    cand = ref - d * exits["trailing_atr"] * atr
+                    base = new_sl if new_sl is not None else tr.sl
+                    if base is None or (cand - base) * d > 0:
+                        new_sl = cand
+                        mg["trailing"] = True
+        if new_sl is not None and (price - new_sl) * d <= 0:
+            # o preço já voltou além do stop novo (como abrir além do stop no backtest): sai agora a mercado
+            await self._close(tr, "trailing" if mg.get("trailing") else "be", price=price)
+            return
         if new_sl is not None:
             new_sl = round(new_sl, int(spec.get("digits", 5)))
             res = await self.broker_for(tr.mode).modify(tr, new_sl, tr.tp)
