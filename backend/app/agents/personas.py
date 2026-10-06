@@ -85,8 +85,8 @@ PERSONAS: dict[str, Persona] = {
 LINES: dict[str, dict[str, list[str]]] = {
     "infra": {
         "start": ["Bom dia! Servidor ligado e dados fresquinhos.", "Tudo verdinho por aqui. Podem trabalhar!"],
-        "mt5_up": ["MT5 conectado: {server}. Dados da corretora na mesa.", "Conexão com o MT5 ok ({server})."],
-        "mt5_down": ["Perdi o MT5! Usando o mercado simulado enquanto isso.", "MT5 fora do ar. Já estou olhando."],
+        "mt5_up": ["Corretora conectada: {server}. Dados da corretora na mesa.", "Conexão com a corretora ok ({server})."],
+        "mt5_down": ["Perdi a corretora! Usando o mercado simulado enquanto isso.", "Corretora fora do ar. Já estou olhando."],
     },
     "news": {
         "start": ["Plantão da Nina no ar! Lendo as fontes.", "Café na mão e as manchetes abertas."],

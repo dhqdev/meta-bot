@@ -228,7 +228,7 @@ async def set_mode(body: ModeBody, user: User = Depends(current_user), office=De
         if not body.confirm:
             raise HTTPException(status_code=400, detail="Confirme que entende que ordens reais serão enviadas à corretora.")
         if not office.market.mt5_ok:
-            raise HTTPException(status_code=409, detail="O MetaTrader 5 não está conectado. Conecte a corretora antes de usar a conta real.")
+            raise HTTPException(status_code=409, detail="A corretora (MetaTrader 5 ou cTrader) não está conectada. Conecte antes de usar a conta real.")
     cfg = get_config()
     if body.mode == "live":
         # guarda a origem dos preços de antes para restaurar ao voltar ao simulado
@@ -246,7 +246,7 @@ async def set_mode(body: ModeBody, user: User = Depends(current_user), office=De
     update_config(changes)
     forget_diagnostico()
     office.market.clear_cache()
-    record_activity("system", "Modo CONTA DA CORRETORA (MT5): as ordens vão para a corretora" if body.mode == "live" else "Modo simulado: nenhuma ordem vai para a corretora", kind="system", level="warning" if body.mode == "live" else "info")
+    record_activity("system", "Modo CONTA DA CORRETORA: as ordens vão para a corretora" if body.mode == "live" else "Modo simulado: nenhuma ordem vai para a corretora", kind="system", level="warning" if body.mode == "live" else "info")
     return {"mode": body.mode, "data_source": get_config().data_source}
 
 

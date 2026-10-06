@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app import __version__
-from app.api import agents, auth, daily, market, settings as settings_api, strategies, system, trades, ws
+from app.api import agents, auth, ctrader, daily, market, settings as settings_api, strategies, system, trades, ws
 from app.config import ensure_secret_key, get_settings, unfilled_placeholders
 from app.db import configure, ensure_database, init_db, session_scope
 from app.security import SecretBox, set_secret_box
@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         return response
 
-    for module in (auth, system, agents, strategies, market, trades, settings_api, daily):
+    for module in (auth, system, agents, strategies, market, trades, settings_api, daily, ctrader):
         app.include_router(module.router)
     app.include_router(ws.router)
     return app

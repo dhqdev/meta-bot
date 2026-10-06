@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.api.auth import confirm_password
 from app.broker.mt5 import MT5Client, MT5Error, MT5Unavailable
+from app.broker.terminals import is_ctrader
 from app.config import get_settings
 from app.db import session_scope
 from app.deps import current_user, get_office
@@ -168,6 +169,7 @@ class TerminalBody(BaseModel):
 def _terminal_view(t: Terminal) -> dict:
     return {
         "id": t.id,
+        "kind": "ctrader" if is_ctrader(t.bridge_url) else "mt5",
         "name": t.name,
         "bridge_url": t.bridge_url,
         "token_set": bool(t.token_enc),
@@ -228,13 +230,14 @@ def update_terminal(terminal_id: int, body: TerminalBody, user: User = Depends(c
         else:
             row.active = False
         row.name = body.name.strip() or row.name
-        row.bridge_url = _validate_url(body.bridge_url)
-        if body.token:
-            row.token_enc = box().encrypt(body.token)
-        row.login = (body.login or "").strip()
-        row.server = (body.server or "").strip()
-        if body.broker_password:
-            row.password_enc = box().encrypt(body.broker_password)
+        if not is_ctrader(row.bridge_url):  # conta da cTrader: a conexão é refeita pelo botão "Conectar cTrader"
+            row.bridge_url = _validate_url(body.bridge_url)
+            if body.token:
+                row.token_enc = box().encrypt(body.token)
+            row.login = (body.login or "").strip()
+            row.server = (body.server or "").strip()
+            if body.broker_password:
+                row.password_enc = box().encrypt(body.broker_password)
         view = _terminal_view(row)
     office.terminals.invalidate()
     office.market.clear_cache()
@@ -266,7 +269,9 @@ class TestBody(BaseModel):
 
 
 @router.post("/terminals/test")
-async def test_terminal(body: TestBody, user: User = Depends(current_user)) -> dict:
+async def test_terminal(body: TestBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    if body.terminal_id and is_ctrader(body.bridge_url):
+        return await _test_ctrader(body.terminal_id, office)
     token = body.token
     if not token and body.terminal_id:
         with session_scope() as s:
@@ -290,4 +295,28 @@ async def test_terminal(body: TestBody, user: User = Depends(current_user)) -> d
         "connected": bool(health.get("connected")),
         "message": f"Conectado à conta {account.get('login')} em {account.get('server')} ({account.get('company')})" if account else "Bridge ok, mas o terminal não está logado em nenhuma conta.",
         "account": {k: account.get(k) for k in ("login", "server", "company", "currency", "balance", "leverage")} if account else None,
+    }
+
+
+async def _test_ctrader(terminal_id: int, office) -> dict:
+    with session_scope() as s:
+        row = s.get(Terminal, terminal_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Terminal não encontrado.")
+        term = {"id": row.id, "name": row.name, "bridge_url": row.bridge_url, "token": box().decrypt(row.token_enc) or "", "login": row.login}
+    client = office.terminals._build(term)
+    if client is None:
+        return {"ok": False, "message": "Credenciais da cTrader ilegíveis: conecte a conta de novo."}
+    try:
+        health = await client.health()
+    except (MT5Error, MT5Unavailable) as exc:
+        return {"ok": False, "message": exc.message}
+    finally:
+        await client.aclose()
+    account = health.get("account") or {}
+    return {
+        "ok": True,
+        "connected": True,
+        "message": f"Conectado à conta {account.get('login')} em {account.get('server')}",
+        "account": {k: account.get(k) for k in ("login", "server", "company", "currency", "balance", "leverage")},
     }

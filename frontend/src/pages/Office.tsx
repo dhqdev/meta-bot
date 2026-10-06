@@ -75,7 +75,7 @@ export function OfficePage() {
         <div className="min-w-0 space-y-3">
           <OfficeCanvas selected={selected} onSelect={pick} />
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Stat label="Patrimônio" value={cash(acc.equity, acc.currency)} hint={live.system.mode === "live" ? "conta MT5" : "conta simulada"} tone="gold" />
+            <Stat label="Patrimônio" value={cash(acc.equity, acc.currency)} hint={live.system.mode === "live" ? "conta da corretora" : "conta simulada"} tone="gold" />
             <Stat label="Hoje" value={signedCash(today, acc.currency || risk.currency)} hint={risk.day_pct != null ? `${signed(risk.day_pct)}% no dia` : undefined} tone={(today ?? 0) >= 0 ? "up" : "down"} />
             <Stat label="Acerto (30 dias)" value={pct(summary.data?.win_rate)} hint={`${summary.data?.trades ?? 0} operações`} />
             <Stat label="Posições abertas" value={open.data?.length ?? 0} hint={`limite ${risk.max_positions ?? "—"}`} />

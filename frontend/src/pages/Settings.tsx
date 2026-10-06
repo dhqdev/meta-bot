@@ -175,7 +175,7 @@ const SECTIONS: Section[] = [
           ["BRL", "Real (R$)"],
           ["USD", "Dólar (US$)"],
         ],
-        hint: "Saldo, comissão, metas em valor e resultados ficam nessa moeda; o valor de cada ponto é convertido pela cotação do dia. Trocar a moeda recomeça a conta simulada (o que a equipe aprendeu continua). No modo real vale a moeda da conta do MT5.",
+        hint: "Saldo, comissão, metas em valor e resultados ficam nessa moeda; o valor de cada ponto é convertido pela cotação do dia. Trocar a moeda recomeça a conta simulada (o que a equipe aprendeu continua). No modo real vale a moeda da conta da corretora.",
       },
       { key: "paper_initial_balance", label: "Saldo inicial da conta simulada", min: 100, max: 100000000, suffix: "@moeda", hint: "Vale ao zerar a conta simulada (Modo de operação)." },
       { key: "paper_commission_per_lot", label: "Comissão por lote (ida e volta)", min: 0, max: 500, suffix: "@moeda", hint: "Coloque a da sua corretora: entra no simulado e em todos os backtests." },
@@ -779,11 +779,11 @@ function ModeCard() {
     <Card title="Modo de operação">
       <div className="flex flex-wrap items-center gap-3">
         <Badge tone={mode === "live" ? "gold" : "blue"} className="text-sm">
-          {mode === "live" ? "Conta da corretora (MT5)" : "Conta simulada"}
+          {mode === "live" ? "Conta da corretora" : "Conta simulada"}
         </Badge>
         {mode === "paper" ? (
           <Button variant="primary" onClick={() => setPrompt("live")}>
-            Usar a conta do MT5
+            Usar a conta da corretora
           </Button>
         ) : (
           <Button
@@ -810,11 +810,11 @@ function ModeCard() {
         )}
       </div>
       <p className="mt-3 text-xs text-muted">
-        Na <b>conta simulada</b> a equipe opera com <b>preços reais</b> (do MT5 se estiver ligado; senão, grátis do Yahoo Finance e da Binance), mas sem enviar ordens: é como uma conta de verdade, sem risco e sem precisar de corretora. Na conta do MT5 as ordens vão para a conta logada no terminal: comece por uma <b>conta demo</b>.
+        Na <b>conta simulada</b> a equipe opera com <b>preços reais</b> (do MT5 se estiver ligado; senão, grátis do Yahoo Finance e da Binance), mas sem enviar ordens: é como uma conta de verdade, sem risco e sem precisar de corretora. Na conta da corretora (MT5 ou cTrader) as ordens vão para a conta conectada: comece por uma <b>conta demo</b>.
       </p>
       <PasswordPrompt
         open={prompt === "live"}
-        title="Operar na conta do MT5"
+        title="Operar na conta da corretora"
         description={<p>As ordens passarão a ser enviadas à corretora logada no MetaTrader 5. Recomendo começar com uma conta demo. Confirme com sua senha.</p>}
         confirmLabel="Entendi, usar a conta"
         onCancel={() => setPrompt(null)}
@@ -856,6 +856,7 @@ function ModeCard() {
 
 interface TerminalRow {
   id: number;
+  kind: "mt5" | "ctrader";
   name: string;
   bridge_url: string;
   token_set: boolean;
@@ -877,7 +878,7 @@ function MT5Card() {
   const mt5 = live.system.mt5 || {};
   return (
     <Card
-      title="MetaTrader 5 · qualquer corretora"
+      title="Corretora · MetaTrader 5 ou cTrader"
       actions={
         panelUrl ? (
           <a href={panelUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-sky hover:underline">
@@ -901,9 +902,18 @@ function MT5Card() {
           <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm">
             <b>{t.name}</b>
             {t.active && <Badge tone="green">ativo</Badge>}
-            <span className="text-xs text-muted">{t.bridge_url}</span>
-            <span className="text-xs text-muted">{t.login ? `conta ${t.login} · ${t.server}` : "login feito pela tela do MT5"}</span>
-            {!t.token_set && <Badge tone="red">sem token</Badge>}
+            {t.kind === "ctrader" ? (
+              <>
+                <Badge tone={t.bridge_url.endsWith("live") ? "gold" : "blue"}>cTrader {t.bridge_url.endsWith("live") ? "real" : "demo"}</Badge>
+                <span className="text-xs text-muted">{t.server || `conta ${t.login}`}</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xs text-muted">{t.bridge_url}</span>
+                <span className="text-xs text-muted">{t.login ? `conta ${t.login} · ${t.server}` : "login feito pela tela do MT5"}</span>
+                {!t.token_set && <Badge tone="red">sem token</Badge>}
+              </>
+            )}
             <div className="ml-auto flex gap-1">
               <Button variant="ghost" className="px-2 py-1 text-xs" onClick={() => setEdit({ ...t, token: "", broker_password: "" })}>
                 Editar
@@ -924,10 +934,13 @@ function MT5Card() {
             </div>
           </div>
         ))}
-        {!q.data?.length && <p className="text-sm text-muted">Nenhum MetaTrader 5 ligado ainda: a conta simulada usa preços reais grátis (Yahoo Finance e Binance).</p>}
-        <Button variant="subtle" className="text-xs" onClick={() => setEdit({ name: q.data?.length ? "MT5 corretora 2" : "MT5 principal", bridge_url: "http://", active: !q.data?.length })}>
-          <Plus className="h-3.5 w-3.5" /> {q.data?.length ? "Adicionar terminal (outra corretora)" : "Ligar um MetaTrader 5"}
-        </Button>
+        {!q.data?.length && <p className="text-sm text-muted">Nenhuma corretora ligada ainda: a conta simulada usa preços reais grátis (Yahoo Finance e Binance).</p>}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="subtle" className="text-xs" onClick={() => setEdit({ kind: "mt5", name: q.data?.length ? "MT5 corretora 2" : "MT5 principal", bridge_url: "http://", active: !q.data?.length })}>
+            <Plus className="h-3.5 w-3.5" /> {q.data?.length ? "Adicionar um MetaTrader 5" : "Ligar um MetaTrader 5"}
+          </Button>
+        </div>
+        <CTraderConnect onConnected={() => void q.refetch()} />
         {test && <div className={`rounded-lg px-3 py-2 text-sm ${test.ok ? "bg-emerald-500/10 text-emerald-200" : "bg-red-500/10 text-red-200"}`}>{test.message}</div>}
       </div>
       <details className="mt-4 text-sm text-slate-300">
@@ -946,7 +959,7 @@ function MT5Card() {
           <li>
             Ligue a máquina ao servidor com o <b>Tailscale</b> (grátis) e cadastre aqui o endereço <code>http://IP-DO-TAILSCALE:8001</code> com o token. Clique em <i>Testar</i>.
           </li>
-          <li>Com o MT5 ligado, a equipe passa a usar os preços da corretora. Ordens de verdade só depois de clicar em "Usar a conta do MT5", em Modo de operação (pede senha).</li>
+          <li>Com o MT5 ligado, a equipe passa a usar os preços da corretora. Ordens de verdade só depois de clicar em "Usar a conta da corretora", em Modo de operação (pede senha).</li>
           <li>Várias corretoras: um MT5 + um bridge por conta (portas 8001, 8002…), cada um cadastrado aqui; o ativo é o que o sistema usa.</li>
         </ol>
       </details>
@@ -956,6 +969,10 @@ function MT5Card() {
             <Field label="Nome">
               <Input value={edit.name ?? ""} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
             </Field>
+            {edit.kind === "ctrader" ? (
+              <p className="self-end text-xs text-muted">Conta da cTrader: para trocar de conta ou renovar o acesso, use "Conectar cTrader" de novo.</p>
+            ) : (
+              <>
             <Field label="Endereço do bridge" hint="Ex.: http://100.101.102.103:8001 (IP do Tailscale da máquina do MT5)">
               <Input value={edit.bridge_url ?? ""} onChange={(e) => setEdit({ ...edit, bridge_url: e.target.value })} />
             </Field>
@@ -971,6 +988,8 @@ function MT5Card() {
             <Field label="Senha da conta na corretora" hint={edit.broker_password_set ? "Deixe em branco para manter." : "Criptografada no banco."}>
               <Input type="password" value={edit.broker_password ?? ""} onChange={(e) => setEdit({ ...edit, broker_password: e.target.value })} />
             </Field>
+              </>
+            )}
           </div>
           <Switch checked={!!edit.active} onChange={(v) => setEdit({ ...edit, active: v })} label="Usar este terminal" />
           <div className="flex justify-between">
@@ -1020,6 +1039,147 @@ function MT5Card() {
         }}
       />
     </Card>
+  );
+}
+
+interface CTraderAccount {
+  account_id: number;
+  login: number;
+  live: boolean;
+  broker: string;
+  can_trade: boolean;
+}
+
+/** Conectar uma conta da cTrader (Pepperstone, IC Markets…) pela Open API: sem MetaTrader e sem Windows. */
+function CTraderConnect({ onConnected }: { onConnected: () => void }) {
+  const status = useQuery({ queryKey: ["ctrader-status"], queryFn: () => api.get<{ redirect_uri: string; client_id: string; authorized: boolean }>("/api/ctrader/status") });
+  const authorized = !!status.data?.authorized;
+  const accounts = useQuery({ queryKey: ["ctrader-accounts"], queryFn: () => api.get<CTraderAccount[]>("/api/ctrader/accounts"), enabled: authorized, retry: false });
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ client_id: "", client_secret: "", access_token: "", refresh_token: "" });
+  const [prompt, setPrompt] = useState<null | "start" | CTraderAccount>(null);
+
+  useEffect(() => {
+    // volta da tela de login da cTrader
+    const flag = new URLSearchParams(window.location.search).get("ctrader");
+    if (!flag) return;
+    if (flag === "contas") notify("cTrader autorizado. Agora escolha a conta que o Meta-Bot vai operar.");
+    else if (flag === "expirado") notify("A autorização da cTrader expirou. Tente de novo.", "error");
+    else notify("A cTrader recusou a autorização. Confira o app e tente de novo.", "error");
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
+
+  return (
+    <div className="mt-2 rounded-lg border border-line/70 bg-ink/30 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <b>cTrader</b>
+        <span className="text-xs text-muted">sem MetaTrader e sem Windows: o Meta-Bot fala direto com a corretora (Pepperstone, IC Markets e outras com cTrader).</span>
+        {!authorized && (
+          <Button variant="subtle" className="ml-auto text-xs" onClick={() => setOpen(!open)}>
+            <Plus className="h-3.5 w-3.5" /> Conectar cTrader
+          </Button>
+        )}
+      </div>
+      {authorized && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-muted">Autorizado. Escolha a conta que o Meta-Bot vai usar (comece pela demo):</p>
+          {accounts.isLoading && <Loading />}
+          {accounts.error && <ErrorBox error={accounts.error} />}
+          {accounts.data?.length === 0 && <p className="text-xs text-muted">Nenhuma conta liberada para este app.</p>}
+          {accounts.data?.map((a) => (
+            <div key={a.account_id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2">
+              <b>{a.broker || "cTrader"}</b>
+              <Badge tone={a.live ? "gold" : "blue"}>{a.live ? "conta real" : "demo"}</Badge>
+              <span className="text-xs text-muted">conta {a.login}</span>
+              {!a.can_trade && <Badge tone="red">só leitura</Badge>}
+              <Button className="ml-auto px-2 py-1 text-xs" disabled={!a.can_trade} onClick={() => setPrompt(a)}>
+                Usar esta conta
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && !authorized && (
+        <div className="mt-3 space-y-3">
+          <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted">
+            <li>
+              Abra uma conta com cTrader na corretora (ex.: Pepperstone, plataforma <b>cTrader</b>; comece pela <b>demo</b>) e entre com o seu <b>cTrader ID</b>.
+            </li>
+            <li>
+              Em{" "}
+              <a className="text-sky underline" href="https://openapi.ctrader.com/apps" target="_blank" rel="noreferrer">
+                openapi.ctrader.com
+              </a>{" "}
+              crie um app (descreva que é um robô de trading pessoal) com o endereço de retorno abaixo e espere a aprovação da Spotware.
+            </li>
+            <li>Cole aqui o Client ID e o Client Secret do app e clique em "Entrar no cTrader".</li>
+          </ol>
+          <Field label="Endereço de retorno (cadastre no app)" hint="Precisa ser igual, letra por letra.">
+            <Input readOnly value={status.data?.redirect_uri ?? ""} onFocus={(e) => e.currentTarget.select()} />
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Client ID">
+              <Input value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} />
+            </Field>
+            <Field label="Client Secret">
+              <Input type="password" value={form.client_secret} onChange={(e) => setForm({ ...form, client_secret: e.target.value })} />
+            </Field>
+          </div>
+          <details className="text-xs text-muted">
+            <summary className="cursor-pointer text-gold">Já tenho um token de acesso (Playground do app)</summary>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2">
+              <Field label="Access token">
+                <Input type="password" value={form.access_token} onChange={(e) => setForm({ ...form, access_token: e.target.value })} />
+              </Field>
+              <Field label="Refresh token" hint="Para renovar sozinho a cada 30 dias.">
+                <Input type="password" value={form.refresh_token} onChange={(e) => setForm({ ...form, refresh_token: e.target.value })} />
+              </Field>
+            </div>
+          </details>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={form.client_id.trim().length < 3 || form.client_secret.trim().length < 3} onClick={() => setPrompt("start")}>
+              {form.access_token ? "Usar o token" : "Entrar no cTrader"}
+            </Button>
+          </div>
+        </div>
+      )}
+      <PasswordPrompt
+        open={prompt === "start"}
+        title="Conectar cTrader"
+        description="O Client Secret e os tokens ficam criptografados no banco."
+        onCancel={() => setPrompt(null)}
+        onConfirm={async (password) => {
+          const res = await api.post<{ authorized: boolean; url?: string }>("/api/ctrader/start", { ...form, access_token: form.access_token || null, refresh_token: form.refresh_token || null, password });
+          setPrompt(null);
+          if (res.url) window.location.href = res.url;
+          else {
+            setOpen(false);
+            void status.refetch();
+          }
+        }}
+      />
+      <PasswordPrompt
+        open={!!prompt && typeof prompt === "object"}
+        title="Usar esta conta da cTrader"
+        description={
+          prompt && typeof prompt === "object"
+            ? `A conta ${prompt.login} (${prompt.live ? "conta real" : "demo"}) passa a ser a corretora ativa. Ordens de verdade só depois de escolher "Usar a conta da corretora" em Modo de operação.`
+            : ""
+        }
+        onCancel={() => setPrompt(null)}
+        onConfirm={async (password) => {
+          if (!prompt || typeof prompt !== "object") return;
+          await api.post("/api/ctrader/connect", { ...prompt, active: true, password });
+          setPrompt(null);
+          notify("Conta da cTrader conectada. O Tito vai testar a conexão.");
+          void status.refetch();
+          onConnected();
+        }}
+      />
+    </div>
   );
 }
 

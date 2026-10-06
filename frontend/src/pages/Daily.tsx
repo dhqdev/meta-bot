@@ -184,7 +184,7 @@ function ReportDetail({ day }: { day: string }) {
           <h2 className="text-lg font-semibold">Daily · {dayLabel(r.day, true)}</h2>
           <Badge tone={STATUS[r.status]?.tone ?? "slate"}>{STATUS[r.status]?.label ?? r.status}</Badge>
           {m.preview && <Badge tone="gold" title="Feita pelo botão antes do horário: não mudou nada para amanhã">prévia</Badge>}
-          <Badge tone={r.mode === "live" ? "gold" : "blue"}>{r.mode === "live" ? "conta MT5" : "simulado"}</Badge>
+          <Badge tone={r.mode === "live" ? "gold" : "blue"}>{r.mode === "live" ? "conta real" : "simulado"}</Badge>
           <Badge tone={r.ai ? "purple" : "slate"} className="ml-auto">
             {r.ai ? "falas pela IA" : "sem IA (regras)"}
           </Badge>

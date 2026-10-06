@@ -200,12 +200,15 @@ class CashierAgent(Agent):
         fill = res.price or est
         sl = round(fill - d * dist_sl, digits)
         tp = round(fill + d * dist_tp, digits) if dist_tp else None
-        if mode == "live" and abs(sl - sl_est) > spec["point"]:
+        # o que ficou na corretora: o enviado na ordem, ou o que ela informou (a cTrader já ancora no preço executado)
+        placed_sl = float(res.raw.get("sl") or sl_est)
+        placed_tp = float(res.raw.get("tp") or 0) or tp_est
+        if mode == "live" and abs(sl - placed_sl) > spec["point"]:
             placeholder = Trade(ticket=res.ticket, symbol=symbol, direction=side, volume=info["volume"], entry_price=fill, mode=mode)
             moved = await broker.modify(placeholder, sl, tp)
             if not moved.ok:
-                # a corretora ficou com o stop e o alvo enviados na ordem: o registro segue o que está lá
-                sl, tp = sl_est, tp_est
+                # o registro segue o stop e o alvo que estão na corretora
+                sl, tp = placed_sl, placed_tp
                 self.log(f"Não consegui ajustar o stop de {symbol} ao preço executado ({moved.message or 'recusado'}); mantive {sl:g}.", kind="order", level="warning")
         risk_money = info["volume"] * dist_sl * value_per_price_unit(spec)
         ctx = {"votes": info["votes"], "risk_pct": info["risk_pct"], "max_bars": info.get("max_bars") or 0}
@@ -228,7 +231,7 @@ class CashierAgent(Agent):
         verb = "Comprei" if d > 0 else "Vendi"
         bus.publish({"type": "trade", "event": "opened", "trade": data})
         self.say("✅ " + self.line("opened", verb=verb, volume=f"{data['volume']:g}", symbol=symbol, price=f"{fill:g}", sl=f"{sl:g}"), "💸")
-        self.log(f"{verb} {data['volume']:g} de {symbol} a {fill:g} ({'simulado' if mode == 'paper' else 'conta MT5'}). Stop {sl:g}, alvo {tp if tp else '—'}. Risco {risk_money:.2f}.", kind="trade")
+        self.log(f"{verb} {data['volume']:g} de {symbol} a {fill:g} ({'simulado' if mode == 'paper' else 'conta da corretora'}). Stop {sl:g}, alvo {tp if tp else '—'}. Risco {risk_money:.2f}.", kind="trade")
         self.skills.gain("execucao", 3, f"ordem em {symbol}")
         self.idle("Acompanhando as posições")
         return trade_id
@@ -514,12 +517,22 @@ class CashierAgent(Agent):
         info = await self.office.live.closed_info(tr.ticket)
         if info is None:
             return
-        reason = {4: "sl", 5: "tp", 6: "stop out"}.get(info["reason"], "fechada na corretora")
+        reason = {4: "sl", 5: "tp", 6: "stop out"}.get(info["reason"]) or self._guess_exit(tr, info["price"])
         if reason == "sl" and (tr.mgmt or {}).get("trailing"):
             reason = "trailing"
         elif reason == "sl" and (tr.mgmt or {}).get("be"):
             reason = "be"
         await self._finalize(tr.id, info["price"], reason, profit=info["profit"], commission=info["commission"], swap=info["swap"], exit_ts=info["time"])
+
+    @staticmethod
+    def _guess_exit(tr: Trade, price: float) -> str:
+        """A corretora não disse o motivo (a cTrader não diz): saiu no preço do stop ou do alvo?"""
+        levels = [(name, lvl) for name, lvl in (("sl", tr.sl), ("tp", tr.tp)) if lvl]
+        if not levels or not price:
+            return "fechada na corretora"
+        name, lvl = min(levels, key=lambda x: abs(price - x[1]))
+        tolerance = max(abs(tr.entry_price - (tr.initial_sl or tr.sl or tr.entry_price)) * 0.15, 1e-12)
+        return name if abs(price - lvl) <= tolerance else "fechada na corretora"
 
     async def _finalize(self, trade_id: int, exit_price: float, reason: str, profit: float | None = None, commission: float | None = None, swap: float | None = None, exit_ts: int | None = None) -> None:
         with session_scope() as s:
