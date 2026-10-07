@@ -155,6 +155,28 @@ def test_team_trades_a_ctrader_account(ctrader_office):
     asyncio.run(run())
 
 
+def test_demo_connected_before_is_adopted_once(ctrader_office):
+    """Demo conectada com a equipe no simulado: o Tito passa a operar nela; se o dono voltar ao simulado, fica."""
+    from app.api.system import apply_mode
+    from app.runtime import get_config
+
+    office = ctrader_office
+    update_config({"mode": "paper", "data_source": "auto"})
+
+    async def run():
+        async with fake_server():
+            infra = office.agent("infra")
+            await infra.check_mt5()
+            assert get_config().mode == "live" and get_config().data_source == "mt5"
+            assert (await office.broker.account())["balance"] == 10000
+            apply_mode(office, "paper")
+            await infra.check_mt5()
+            assert get_config().mode == "paper"
+            await office.terminals.client().aclose()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("refuse", [False, True])
 def test_slippage_keeps_stop_where_the_broker_has_it(ctrader_office, refuse):
     cashier = ctrader_office.agent("cashier")

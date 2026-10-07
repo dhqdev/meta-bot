@@ -188,11 +188,9 @@ async def connect(body: ConnectBody, user: User = Depends(current_user), office=
     st = infra.status or {}
     connected = bool(st.get("connected")) and body.active
     mode = get_config().mode
-    if connected and not body.live and mode != "live":
-        # conta demo: senha conferida, conexão testada e nenhum dinheiro de verdade, então a equipe passa a operar
-        # nela (saldo, lote e ordens da demo). Na conta real a troca continua manual, em Modo de operação.
-        apply_mode(office, "live", f"conta demo da cTrader {body.login or body.account_id}")
-    elif body.live and body.active and mode == "live":
+    # conta demo testada: o Tito já passou a equipe para ela (infra._adopt_ctrader_demo). Na conta real a troca
+    # continua manual, em Modo de operação.
+    if body.live and body.active and mode == "live":
         # conta real nova nunca recebe ordens sem o dono escolher em Modo de operação
         apply_mode(office, "paper", "conta real da cTrader conectada: escolha em Modo de operação quando quiser usá-la")
     account = {k: st.get(k) for k in ("login", "server", "currency", "balance")} if connected else None

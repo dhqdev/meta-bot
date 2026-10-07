@@ -17,6 +17,9 @@ from app.models import Activity, AgentMessage, EquitySnapshot, SkillEvent
 from app.runtime import get_config
 
 
+DEMO_ADOPTED_KEY = "ctrader.demo_adopted"  # terminais demo da cTrader que já passaram a ser a conta da equipe
+
+
 class InfraAgent(Agent):
     profile = AgentProfile(
         id="infra",
@@ -116,6 +119,7 @@ class InfraAgent(Agent):
             "feed": self.feed,
         }
         if connected:
+            self._adopt_ctrader_demo(term)
             self._healthy_streak += 1
             if self._announced_down:
                 self.tell("all", "🔌 " + self.line("mt5_up", server=str((self.status or {}).get("server") or "corretora")), kind="info")
@@ -126,6 +130,25 @@ class InfraAgent(Agent):
                 self.skills.gain("conexao_mt5", 2, "terminal saudável")
         self.idle("Monitorando o servidor" if connected else "Esperando o login na corretora")
         self._publish()
+
+    def _adopt_ctrader_demo(self, term: dict | None) -> None:
+        """Conta demo da cTrader conectada com a equipe no simulado: passa a operar nela, uma vez por conta.
+
+        Conectar a demo (com senha) é o pedido do dono para operar nela (07/10/2026); se depois ele voltar ao
+        simulado pela tela, a equipe fica no simulado. Conta real nunca entra sozinha."""
+        from app.api.system import apply_mode
+        from app.broker.terminals import ctrader_environment, is_ctrader
+
+        if not term or not is_ctrader(term["bridge_url"]) or ctrader_environment(term["bridge_url"]) != "demo":
+            return
+        adopted = list(kv_get(DEMO_ADOPTED_KEY) or [])
+        if term["id"] in adopted:
+            return
+        kv_set(DEMO_ADOPTED_KEY, adopted + [term["id"]])
+        if get_config().mode == "live":
+            return
+        apply_mode(self.office, "live", f"conta demo da cTrader {term.get('login') or ''}".strip())
+        self.tell("all", f"🔌 Conta demo da cTrader conectada ({(self.status or {}).get('server') or term['name']}): a partir de agora operamos nela.", kind="info")
 
     def _down(self, message: str, now: str) -> None:
         self.office.market.mt5_ok = False
