@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.auth import confirm_password
+from app.api.system import apply_mode
 from app.broker.ctrader import AUTH_URL, TOKEN_URL, list_accounts
 from app.broker.mt5 import MT5Error, MT5Unavailable
 from app.broker.terminals import CTRADER_PREFIX, ctrader_endpoint
@@ -29,6 +30,7 @@ from app.deps import current_user, get_office
 from app.events import record_activity
 from app.kv import secret_get, secret_set
 from app.models import Terminal, User
+from app.runtime import get_config
 from app.security import box
 
 router = APIRouter(prefix="/api/ctrader", tags=["ctrader"])
@@ -153,7 +155,7 @@ class ConnectBody(BaseModel):
 
 
 @router.post("/connect")
-def connect(body: ConnectBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+async def connect(body: ConnectBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
     confirm_password(user, body.password)
     pending = _pending()
     if not pending.get("access_token"):
@@ -179,6 +181,19 @@ def connect(body: ConnectBody, user: User = Depends(current_user), office=Depend
     _save_pending(None)
     office.terminals.invalidate()
     office.market.clear_cache()
-    office.agent("infra").request("health")
     record_activity("system", f"Conta da cTrader conectada: {label}", kind="settings")
-    return {"ok": True, "id": terminal_id, "name": label}
+    # testa na hora: o dono vê o saldo da conta (ou o motivo da falha) sem esperar a próxima checagem do Tito
+    infra = office.agent("infra")
+    await infra.check_mt5()
+    st = infra.status or {}
+    connected = bool(st.get("connected")) and body.active
+    mode = get_config().mode
+    if connected and not body.live and mode != "live":
+        # conta demo: senha conferida, conexão testada e nenhum dinheiro de verdade, então a equipe passa a operar
+        # nela (saldo, lote e ordens da demo). Na conta real a troca continua manual, em Modo de operação.
+        apply_mode(office, "live", f"conta demo da cTrader {body.login or body.account_id}")
+    elif body.live and body.active and mode == "live":
+        # conta real nova nunca recebe ordens sem o dono escolher em Modo de operação
+        apply_mode(office, "paper", "conta real da cTrader conectada: escolha em Modo de operação quando quiser usá-la")
+    account = {k: st.get(k) for k in ("login", "server", "currency", "balance")} if connected else None
+    return {"ok": True, "id": terminal_id, "name": label, "connected": connected, "message": st.get("message", ""), "account": account, "mode": get_config().mode}

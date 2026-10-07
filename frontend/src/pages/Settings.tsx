@@ -833,14 +833,14 @@ function ModeCard() {
       <PasswordPrompt
         open={prompt === "live"}
         title="Operar na conta da corretora"
-        description={<p>As ordens passarão a ser enviadas à corretora logada no MetaTrader 5. Recomendo começar com uma conta demo. Confirme com sua senha.</p>}
+        description={<p>As ordens passarão a ser enviadas à conta conectada (MetaTrader 5 ou cTrader), e o patrimônio das telas passa a ser o dela. Recomendo começar com uma conta demo. Confirme com sua senha.</p>}
         confirmLabel="Entendi, usar a conta"
         onCancel={() => setPrompt(null)}
         onConfirm={async (password) => {
           const r = await api.post<any>("/api/system/mode", { mode: "live", password, confirm: true });
           patchSystem({ mode: r.mode, data_source: "mt5" });
           setPrompt(null);
-          notify("Conta do MT5 ligada: as ordens vão para a corretora.", "info");
+          notify("Conta da corretora ligada: as ordens vão para ela.", "info");
           void qc.invalidateQueries();
         }}
       />
@@ -915,6 +915,12 @@ function MT5Card() {
         )}
         {!mt5.connected && mt5.message && <span className="text-muted">{mt5.message}</span>}
       </div>
+      {mt5.connected && live.system.mode !== "live" && (
+        <p className="mb-3 rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 text-xs text-slate-200">
+          A equipe ainda está na <b>conta simulada</b>: o patrimônio e as ordens das telas são os do simulado, e desta conta ela só usa os preços. Para
+          ver o saldo desta conta e operar nela, clique em <b>Usar a conta da corretora</b>, em Modo de operação.
+        </p>
+      )}
       <div className="space-y-2">
         {q.data?.map((t) => (
           <div key={t.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel2 px-3 py-2 text-sm">
@@ -1184,15 +1190,23 @@ function CTraderConnect({ onConnected }: { onConnected: () => void }) {
         title="Usar esta conta da cTrader"
         description={
           prompt && typeof prompt === "object"
-            ? `A conta ${prompt.login} (${prompt.live ? "conta real" : "demo"}) passa a ser a corretora ativa. Ordens de verdade só depois de escolher "Usar a conta da corretora" em Modo de operação.`
+            ? prompt.live
+              ? `A conta real ${prompt.login} passa a ser a corretora ativa. Ordens de verdade só depois de escolher "Usar a conta da corretora" em Modo de operação.`
+              : `A conta demo ${prompt.login} passa a ser a corretora ativa e a equipe passa a operar nela: o saldo, o lote e as ordens são os da demo, sem dinheiro de verdade.`
             : ""
         }
         onCancel={() => setPrompt(null)}
         onConfirm={async (password) => {
           if (!prompt || typeof prompt !== "object") return;
-          await api.post("/api/ctrader/connect", { ...prompt, active: true, password });
+          const r = await api.post<any>("/api/ctrader/connect", { ...prompt, active: true, password });
           setPrompt(null);
-          notify("Conta da cTrader conectada. O Tito vai testar a conexão.");
+          if (!r.connected) notify(`Conta salva, mas a conexão falhou: ${r.message || "sem resposta da cTrader"}`, "error");
+          else
+            notify(
+              `Conta ${r.account?.login} conectada: saldo ${money(r.account?.balance)} ${r.account?.currency ?? ""}. ` +
+                (r.mode === "live" ? "A equipe passou a operar nela." : 'Para operar nela, use "Usar a conta da corretora" em Modo de operação.'),
+            );
+          patchSystem({ mode: r.mode });
           void status.refetch();
           onConnected();
         }}

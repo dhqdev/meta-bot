@@ -237,8 +237,15 @@ def test_connect_ctrader_account_from_settings(client_owner, monkeypatch):
         assert accounts.status_code == 200, accounts.text
         acc = accounts.json()[0]
         assert acc == {"account_id": ACCOUNT_ID, "login": 777001, "live": False, "broker": "Pepperstone", "can_trade": True}
+        assert client_owner.get("/api/system").json()["mode"] == "paper"
         res = client_owner.post("/api/ctrader/connect", json={**acc, "password": password})
         assert res.status_code == 200, res.text
+        # testada na hora: o saldo da demo volta na resposta e a equipe passa a operar nela
+        body = res.json()
+        assert body["connected"] and body["account"]["balance"] == 10000 and body["account"]["currency"] == "USD"
+        assert body["mode"] == "live"
+        system = client_owner.get("/api/system").json()
+        assert system["mode"] == "live" and system["account"]["balance"] == 10000 and system["data_source"] == "mt5"
         terms = client_owner.get("/api/settings/terminals").json()
         assert terms[-1]["kind"] == "ctrader" and terms[-1]["active"] and terms[-1]["bridge_url"] == "ctrader://demo"
         assert "token" not in json.dumps(terms).replace("token_set", "")
@@ -246,6 +253,10 @@ def test_connect_ctrader_account_from_settings(client_owner, monkeypatch):
         assert test.json()["ok"], test.text
         assert "777001" in test.json()["message"]
         assert not client_owner.get("/api/ctrader/status").json()["authorized"]  # tokens saíram do rascunho e foram para o terminal
+        # conta real conectada com a equipe na corretora: volta ao simulado até o dono escolher em Modo de operação
+        client_owner.post("/api/ctrader/start", json={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "access_token": "token-1", "refresh_token": "refresh-1", "password": password})
+        res = client_owner.post("/api/ctrader/connect", json={**acc, "live": True, "password": password})
+        assert res.status_code == 200 and res.json()["mode"] == "paper"
     finally:
         get_settings().ctrader_endpoint = ""
         loop.call_soon_threadsafe(loop.stop)

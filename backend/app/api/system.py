@@ -221,16 +221,10 @@ class ModeBody(BaseModel):
     confirm: bool = False
 
 
-@router.post("/system/mode")
-async def set_mode(body: ModeBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
-    if body.mode == "live":
-        confirm_password(user, body.password)
-        if not body.confirm:
-            raise HTTPException(status_code=400, detail="Confirme que entende que ordens reais serão enviadas à corretora.")
-        if not office.market.mt5_ok:
-            raise HTTPException(status_code=409, detail="A corretora (MetaTrader 5 ou cTrader) não está conectada. Conecte antes de usar a conta real.")
+def apply_mode(office, mode: str, note: str = "") -> None:
+    """Troca entre a conta simulada e a da corretora (quem chama já conferiu senha e conexão)."""
     cfg = get_config()
-    if body.mode == "live":
+    if mode == "live":
         # guarda a origem dos preços de antes para restaurar ao voltar ao simulado
         if cfg.mode != "live":
             kv_set(PREVIOUS_SOURCE_KEY, cfg.data_source)
@@ -246,7 +240,19 @@ async def set_mode(body: ModeBody, user: User = Depends(current_user), office=De
     update_config(changes)
     forget_diagnostico()
     office.market.clear_cache()
-    record_activity("system", "Modo CONTA DA CORRETORA: as ordens vão para a corretora" if body.mode == "live" else "Modo simulado: nenhuma ordem vai para a corretora", kind="system", level="warning" if body.mode == "live" else "info")
+    text = "Modo CONTA DA CORRETORA: as ordens vão para a corretora" if mode == "live" else "Modo simulado: nenhuma ordem vai para a corretora"
+    record_activity("system", text + (f" ({note})" if note else ""), kind="system", level="warning" if mode == "live" else "info")
+
+
+@router.post("/system/mode")
+async def set_mode(body: ModeBody, user: User = Depends(current_user), office=Depends(get_office)) -> dict:
+    if body.mode == "live":
+        confirm_password(user, body.password)
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="Confirme que entende que ordens reais serão enviadas à corretora.")
+        if not office.market.mt5_ok:
+            raise HTTPException(status_code=409, detail="A corretora (MetaTrader 5 ou cTrader) não está conectada. Conecte antes de usar a conta real.")
+    apply_mode(office, body.mode)
     return {"mode": body.mode, "data_source": get_config().data_source}
 
 
