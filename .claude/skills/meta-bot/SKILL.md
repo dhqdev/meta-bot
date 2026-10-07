@@ -40,7 +40,7 @@ Os modelos são **fixos no código** (`backend/app/services/llm.py`, `AGENT_MODE
 - **A IA nunca envia ordem.** Ela só escolhe entre candidatos já filtrados; toda resposta é validada com Pydantic (`complete_json` + `schema_model`) e passa pelas regras de risco e caixa.
 - **Backtest honesto:** entrada na abertura do próximo candle, custos (spread, slippage, comissão), stop antes do alvo no mesmo candle, aprovação fora da amostra.
 - **Segredos nunca no repositório** (o repo é público). Senhas e chaves vão na stack do Portainer ou criptografadas no banco.
-- Modo conta real exige senha + confirmação + MT5 conectado.
+- Modo conta real exige senha + confirmação + MT5 conectado. Exceção: `POST /api/ctrader/connect` testa a conta na hora e, se for **demo**, já liga o modo da corretora (`system.apply_mode`); conectar uma conta **real** com a equipe na corretora volta ao simulado.
 
 ## Daily (19h, horário de Brasília)
 
