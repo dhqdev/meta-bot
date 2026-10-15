@@ -70,7 +70,7 @@ export function PowerButton({ compact }: { compact?: boolean }) {
             void qc.invalidateQueries();
             return res;
           },
-          (res) => (res.running ? "Escritório aberto: a equipe começou a trabalhar." : "Escritório fechado: sem novas entradas (as abertas continuam protegidas)."),
+          (res) => (res.running ? "Escritório aberto: a equipe começou a trabalhar." : "Escritório desligado: só o site fica no ar e ele não religa sozinho."),
         );
         setBusy(false);
       }}
@@ -78,7 +78,7 @@ export function PowerButton({ compact }: { compact?: boolean }) {
         "flex items-center gap-2 whitespace-nowrap rounded-lg px-3 py-2 font-pixel text-[9px] uppercase transition disabled:opacity-60",
         running ? "bg-up text-ink hover:bg-emerald-300" : "bg-slate-700 text-slate-100 hover:bg-slate-600",
       )}
-      title={running ? "Desligar: a equipe para de abrir operações (as abertas continuam protegidas)" : "Ligar o escritório"}
+      title={running ? "Desligar: os agentes param e só o site fica no ar (não religa sozinho; posições abertas seguem protegidas pelo Caio)" : "Ligar o escritório"}
     >
       <Power className="h-4 w-4" />
       {!compact && <span className="hidden sm:inline">{running ? "Escritório aberto" : "Ligar escritório"}</span>}

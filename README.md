@@ -145,6 +145,7 @@ Todo dia às **19h** (horário de Brasília, ajustável), se a equipe trabalhou,
 3. **A reunião**: com IA, cada agente fala no seu jeito, com os números do dia; sem IA, as falas saem das próprias análises.
 4. **Relatório** na aba **Daily**: resumo, falas, foco de amanhã, ajustes, lições e números (inclusive as revisões de posição do Gustavo). As lições de todos entram no prompt da IA do Gustavo (é ele quem aplica as lições da Estela, da Rita e do Hugo, que não usam IA), o próximo plano já é montado com elas e o Gustavo lembra a equipe do foco na manhã seguinte. Cada daily dá XP na skill *Aprendizado da daily*.
 5. **Pausa**: depois da daily do horário, o escritório fecha por **1 hora** (ajustável em **Config. → Daily da equipe**; 0 = sem pausa). Ninguém abre posição nova e as ordens armadas são canceladas; o Caio continua protegendo as posições abertas. Na hora marcada o escritório reabre sozinho. Ligar ou desligar pelo botão do topo encerra a pausa.
+6. **Desligar**: o botão do topo para os agentes e a daily de verdade e solta a memória; só o site fica no ar. Desligado na mão não religa sozinho (nem com a daily, nem no fim de semana, nem ao reiniciar o servidor). Com posição aberta, só o Caio continua até ela fechar. Para voltar, clique em **Ligar escritório**.
 
 Os efeitos de um dia no outro (horário evitado, estratégia fora do plano até revalidar, lote menor, lições no plano da IA, foco da manhã) são conferidos pelo teste `backend/tests/test_next_day.py`.
 

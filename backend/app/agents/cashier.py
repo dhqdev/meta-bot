@@ -116,6 +116,9 @@ class CashierAgent(Agent):
         if self.is_running() and self.due("exits_review", 86400):
             await self.review_exits()
 
+    def keep_alive_when_off(self) -> bool:
+        return bool(self._open_trades() or self._pending)
+
     @staticmethod
     def _open_trades() -> list[int]:
         with session_scope() as s:

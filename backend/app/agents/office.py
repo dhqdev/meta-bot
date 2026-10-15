@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import time
 import uuid
@@ -66,12 +67,27 @@ class Office:
         for agent in self.agents.values():
             agent.skills.ensure([*agent.skill_defs, DAILY_SKILL])
 
+    @staticmethod
+    def should_run() -> bool:
+        """Escritório ligado: equipe trabalhando ou numa pausa automática (daily, fim de semana) que reabre sozinha.
+
+        Desligado na mão = nada roda em segundo plano (só o site), e nada religa sozinho."""
+        return get_config().system_running or Office.break_info() is not None
+
+    @property
+    def powered(self) -> bool:
+        return any(not t.done() for t in self.tasks)
+
     async def start(self) -> None:
         bus.bind_loop(asyncio.get_running_loop())
         self.ensure_setup()
+        if self.powered:
+            return
+        self.tasks = [t for t in self.tasks if not t.done()]
         self.sync_data_family()
         self.sync_paper_currency()
         for agent in self.agents.values():
+            agent._was_running = None
             self.tasks.append(asyncio.create_task(agent.run_forever(), name=f"agent-{agent.id}"))
         self.tasks.append(asyncio.create_task(self.daily_loop(), name="daily"))
         if not self.check_break():
@@ -178,6 +194,8 @@ class Office:
         """Confere a cada 30 s se chegou a hora da daily e se a pausa depois dela já acabou."""
         while True:
             await asyncio.sleep(30)
+            if not self.should_run():
+                return  # desligado na mão: sem daily e sem reabrir sozinho
             try:
                 self.check_weekend()
                 self.check_break()
@@ -282,6 +300,25 @@ class Office:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks.clear()
+
+    async def power_off(self) -> None:
+        """Desliga o escritório de verdade: para os agentes e a daily e solta a memória (o site continua no ar).
+
+        Com posição aberta, o Caio fica sozinho protegendo (stop, alvo e trailing) e sai quando ela fechar."""
+        guard = self.agents["cashier"].keep_alive_when_off()
+        keep = [t for t in self.tasks if guard and t.get_name() == "agent-cashier"]
+        drop = [t for t in self.tasks if t not in keep]
+        for task in drop:
+            task.cancel()
+        await asyncio.gather(*drop, return_exceptions=True)
+        self.tasks = keep
+        for agent in self.agents.values():
+            if not (guard and agent.id == "cashier"):
+                agent.set_state("off", "lounge", "Escritório desligado", "💤")
+        self.market.clear_cache()
+        self._exit_cache = None
+        gc.collect()
+        log.info("escritório desligado (só o site no ar)%s", "; Caio segue nas posições abertas" if guard else "")
 
     def agent(self, agent_id: str):
         return self.agents[agent_id]

@@ -123,11 +123,15 @@ export function OfficeCanvas({ selected, onSelect }: { selected?: string; onSele
       ctx.imageSmoothingQuality = "high";
       ctx.drawImage(world, 0, 0, canvas.width, canvas.height);
       engine.renderOverlay(ctx, canvas.width / OFFICE_SIZE.width, dpr);
-      raf = requestAnimationFrame(loop);
+      // escritório desligado: quase nada se mexe, então desenha 2 vezes por segundo (poupa CPU e memória)
+      if (engine.info.running) raf = requestAnimationFrame(loop);
+      else idle = window.setTimeout(() => (raf = requestAnimationFrame(loop)), 500);
     };
+    let idle = 0;
     raf = requestAnimationFrame(loop);
     return () => {
       cancelAnimationFrame(raf);
+      clearTimeout(idle);
       ro.disconnect();
       window.removeEventListener("resize", resize);
     };

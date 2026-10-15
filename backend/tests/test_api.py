@@ -255,3 +255,29 @@ def test_login_limit_ignores_forged_forwarded_for(client):
         r = client.post("/api/auth/login", json={"email": f"outro{i}@example.com", "password": "errada123456"}, headers=headers)
         statuses.append(r.status_code)
     assert statuses[:6] == [401] * 6 and statuses[6:] == [429, 429]
+
+
+def test_desligar_para_os_agentes_e_nao_religa(client_owner, monkeypatch):
+    """Desligado na mão: agentes e daily param, nada religa sozinho e continua desligado ao reiniciar."""
+    import asyncio
+
+    from app.agents.office import Office
+    from app.config import get_settings
+    from app.runtime import get_config
+
+    client = client_owner
+    office = client.app.state.office
+    monkeypatch.setattr(get_settings(), "agents_enabled", True)
+    r = client.post("/api/system/running", json={"running": True})
+    assert r.status_code == 200 and r.json()["office_on"] is True
+    assert client.get("/api/system").json()["office_on"] is True
+
+    r = client.post("/api/system/running", json={"running": False})
+    assert r.json() == {"running": False, "office_on": False}
+    assert get_config().system_running is False and not office.should_run()
+    assert all(a.state == "off" for a in office.agents.values() if a.id != "cashier")
+
+    # um agente que ainda estivesse vivo sai sozinho, sem religar o escritório
+    fresh = Office(get_settings())
+    asyncio.run(asyncio.wait_for(fresh.agents["manager"].run_forever(), timeout=5))
+    assert get_config().system_running is False

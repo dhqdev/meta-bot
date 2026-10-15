@@ -51,6 +51,7 @@ async def system(user: User = Depends(current_user), office=Depends(get_office))
         "plan": office.agent("manager").active_plan(),
         "plan_rationale": office.agent("manager").rationale,
         "office_break": office.break_info(),
+        "office_on": office.powered,
     }
 
 
@@ -137,7 +138,7 @@ async def _diagnostico(office) -> dict:
         elif brk:
             add("stop", f"Escritório em pausa depois da daily até {_local(brk['until'])}.")
         else:
-            add("stop", "Escritório desligado: ninguém abre operação nova até você ligar (botão no topo).")
+            add("stop", "Escritório desligado: agentes parados (só o site no ar) e nada religa sozinho. Para voltar, use o botão no topo.")
     if not fx["open"]:
         add("stop", f"Mercado de câmbio fechado agora. Reabre {_local(fx['next_change'])} (Brasília).")
     elif fx["next_change_in_min"] is not None and fx["next_change_in_min"] <= 180:
@@ -208,11 +209,17 @@ async def set_running(body: RunBody, user: User = Depends(current_user), office=
         kv_set(WEEKEND_SKIP_KEY, reopen.isoformat() if reopen else None)
     update_config({"system_running": body.running})
     forget_diagnostico()
+    # Desligar para os agentes de verdade (só o site fica no ar) e nada religa sozinho; ligar sobe a equipe de novo.
+    if body.running:
+        if get_settings().agents_enabled:
+            await office.start()
+    else:
+        await office.power_off()
     bus.publish({"type": "system", "running": body.running})
-    record_activity("system", "Sistema ligado: a equipe chegou ao escritório" if body.running else "Sistema desligado: sem novas entradas (as posições abertas continuam protegidas)", kind="system")
+    record_activity("system", "Escritório ligado: a equipe chegou" if body.running else "Escritório desligado: agentes parados, só o site no ar (não religa sozinho)", kind="system")
     for agent in office.agents.values():
         agent.request("*")
-    return {"running": body.running}
+    return {"running": body.running, "office_on": office.powered}
 
 
 class ModeBody(BaseModel):

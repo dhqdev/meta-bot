@@ -146,12 +146,19 @@ class Agent:
         self._forced.add(job)
         self._wake.set()
 
+    def keep_alive_when_off(self) -> bool:
+        """Continua rodando com o escritório desligado? (só o Caio, enquanto houver posição aberta)"""
+        return False
+
     def is_running(self) -> bool:
         return get_config().system_running
 
     async def run_forever(self) -> None:
         await asyncio.sleep(0.5)
         while True:
+            if not self.office.should_run() and not self.keep_alive_when_off():
+                self.set_state("off", "lounge", "Escritório desligado", "💤")
+                return  # desligado na mão: o agente sai e só volta quando o dono ligar
             try:
                 running = self.is_running()
                 if running != self._was_running:

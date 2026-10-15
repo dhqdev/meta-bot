@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
@@ -13,6 +14,7 @@ from app import __version__
 from app.api import agents, auth, ctrader, daily, market, settings as settings_api, strategies, system, trades, ws
 from app.config import ensure_secret_key, get_settings, unfilled_placeholders
 from app.db import configure, ensure_database, init_db, session_scope
+from app.events import bus
 from app.security import SecretBox, set_secret_box
 
 log = logging.getLogger("metabot")
@@ -48,9 +50,11 @@ async def lifespan(app: FastAPI):
 
     office = Office(settings)
     app.state.office = office
-    if settings.agents_enabled:
+    if settings.agents_enabled and (office.should_run() or office.agents["cashier"].keep_alive_when_off()):
+        # desligado na mão continua desligado depois de reiniciar (só o site no ar, sem agentes na memória)
         await office.start()
     else:
+        bus.bind_loop(asyncio.get_running_loop())
         office.ensure_setup()
     try:
         yield
